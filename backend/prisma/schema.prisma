@@ -1,0 +1,421 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+//============================================================
+// Multi-tenant Core
+//============================================================
+
+model Tenant {
+  id           String   @id @default(uuid())
+  name         String
+  code         String   @unique
+  plan         String   @default("STANDARD")
+  status       String   @default("ACTIVE")
+  settings     Json?
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+  
+  // Relations
+  users              User[]
+  departments        Department[]
+  vendors            Vendor[]
+  products           Product[]
+  warehouses         Warehouse[]
+  purchase_requests  PurchaseRequest[]
+  purchase_orders    PurchaseOrder[]
+  
+  @@map("tenants")
+}
+
+//============================================================
+// Organization Structure
+//============================================================
+
+model Department {
+  id           String    @id @default(uuid())
+  tenant_id    String
+  code         String
+  name         String
+  parent_id    String?
+  cost_center  String?
+  status       String    @default("ACTIVE")
+  created_at   DateTime  @default(now())
+  updated_at   DateTime  @updatedAt
+  
+  // Relations
+  tenant       Tenant      @relation(fields: [tenant_id], references: [id])
+  parent       Department? @relation("DepartmentHierarchy", fields: [parent_id], references: [id])
+  children     Department[] @relation("DepartmentHierarchy")
+  users        User[]
+  purchase_requests PurchaseRequest[]
+  
+  @@unique([tenant_id, code])
+  @@index([tenant_id])
+  @@map("departments")
+}
+
+model User {
+  id              String    @id @default(uuid())
+  tenant_id       String
+  auth0_user_id   String    @unique
+  employee_code   String?
+  first_name      String
+  last_name       String
+  email           String
+  department_id   String?
+  manager_id      String?
+  approval_limit  Decimal?  @db.Decimal(15, 2)
+  
+  // アプリケーション承認管理
+  app_approved    Boolean   @default(false)  // アプリ利用承認フラグ
+  approved_by     String?                    // 承認者ID  
+  approved_at     DateTime?                  // 承認日時
+  
+  status          String    @default("ACTIVE")
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @updatedAt
+  
+  // Relations
+  tenant          Tenant    @relation(fields: [tenant_id], references: [id])
+  department      Department? @relation(fields: [department_id], references: [id])
+  manager         User?     @relation("ManagerRelation", fields: [manager_id], references: [id])
+  subordinates    User[]    @relation("ManagerRelation")
+  roles           UserRole[]
+  
+  // Business relations
+  created_requests    PurchaseRequest[] @relation("RequestCreator")
+  approved_requests   PurchaseRequest[] @relation("RequestApprover")
+  created_orders      PurchaseOrder[]   @relation("OrderCreator")
+  
+  @@unique([tenant_id, email])
+  @@unique([tenant_id, employee_code])
+  @@index([tenant_id])
+  @@index([auth0_user_id])
+  @@map("users")
+}
+
+//============================================================
+// Access Control (Business Permissions)
+//============================================================
+
+model Role {
+  id           String   @id @default(uuid())
+  tenant_id    String?
+  name         String
+  display_name String
+  description  String?
+  is_system    Boolean  @default(false)
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+  
+  // Relations
+  permissions  RolePermission[]
+  users        UserRole[]
+  
+  @@unique([tenant_id, name])
+  @@map("roles")
+}
+
+model Permission {
+  id           String   @id @default(uuid())
+  name         String   @unique
+  resource     String
+  action       String
+  description  String?
+  created_at   DateTime @default(now())
+  
+  // Relations
+  roles        RolePermission[]
+  
+  @@unique([resource, action])
+  @@map("permissions")
+}
+
+model RolePermission {
+  id            String   @id @default(uuid())
+  role_id       String
+  permission_id String
+  created_at    DateTime @default(now())
+  
+  // Relations
+  role          Role       @relation(fields: [role_id], references: [id], onDelete: Cascade)
+  permission    Permission @relation(fields: [permission_id], references: [id], onDelete: Cascade)
+  
+  @@unique([role_id, permission_id])
+  @@map("role_permissions")
+}
+
+model UserRole {
+  id         String   @id @default(uuid())
+  user_id    String
+  role_id    String
+  created_at DateTime @default(now())
+  
+  // Relations
+  user       User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  role       Role @relation(fields: [role_id], references: [id], onDelete: Cascade)
+  
+  @@unique([user_id, role_id])
+  @@map("user_roles")
+}
+
+//============================================================
+// Master Data
+//============================================================
+
+model Vendor {
+  id           String   @id @default(uuid())
+  tenant_id    String
+  code         String
+  name         String
+  email        String?
+  phone        String?
+  address      String?
+  tax_id       String?
+  payment_terms String?
+  status       String   @default("ACTIVE")
+  rating       Int?
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+  
+  // Relations
+  tenant       Tenant   @relation(fields: [tenant_id], references: [id])
+  purchase_orders PurchaseOrder[]
+  vendor_products VendorProduct[]
+  
+  @@unique([tenant_id, code])
+  @@index([tenant_id])
+  @@map("vendors")
+}
+
+model Product {
+  id           String   @id @default(uuid())
+  tenant_id    String
+  code         String
+  name         String
+  description  String?
+  category     String?
+  unit         String
+  min_quantity Decimal? @db.Decimal(15, 3)
+  max_quantity Decimal? @db.Decimal(15, 3)
+  status       String   @default("ACTIVE")
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+  
+  // Relations
+  tenant       Tenant   @relation(fields: [tenant_id], references: [id])
+  vendor_products VendorProduct[]
+  inventory_items InventoryItem[]
+  
+  @@unique([tenant_id, code])
+  @@index([tenant_id])
+  @@map("products")
+}
+
+model Warehouse {
+  id           String   @id @default(uuid())
+  tenant_id    String
+  code         String
+  name         String
+  address      String?
+  manager_id   String?
+  status       String   @default("ACTIVE")
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+  
+  // Relations
+  tenant       Tenant   @relation(fields: [tenant_id], references: [id])
+  inventory_items InventoryItem[]
+  
+  @@unique([tenant_id, code])
+  @@index([tenant_id])
+  @@map("warehouses")
+}
+
+//============================================================
+// Procurement Process
+//============================================================
+
+model PurchaseRequest {
+  id              String   @id @default(uuid())
+  tenant_id       String
+  request_no      String
+  requester_id    String
+  department_id   String?
+  required_date   DateTime
+  status          String   @default("DRAFT")
+  priority        String   @default("NORMAL")
+  total_amount    Decimal  @db.Decimal(15, 2)
+  currency        String   @default("JPY")
+  notes           String?
+  
+  // Approval tracking
+  submitted_at    DateTime?
+  approved_by     String?
+  approved_at     DateTime?
+  rejection_reason String?
+  
+  // Event sourcing
+  version         Int      @default(0)
+  events          Json[]
+  
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+  
+  // Relations
+  tenant          Tenant   @relation(fields: [tenant_id], references: [id])
+  requester       User     @relation("RequestCreator", fields: [requester_id], references: [id])
+  approver        User?    @relation("RequestApprover", fields: [approved_by], references: [id])
+  department      Department? @relation(fields: [department_id], references: [id])
+  items           PurchaseRequestItem[]
+  
+  @@unique([tenant_id, request_no])
+  @@index([tenant_id, status, created_at])
+  @@index([requester_id])
+  @@map("purchase_requests")
+}
+
+model PurchaseRequestItem {
+  id                  String   @id @default(uuid())
+  purchase_request_id String
+  product_id          String
+  quantity            Decimal  @db.Decimal(15, 3)
+  unit_price          Decimal  @db.Decimal(15, 2)
+  total_price         Decimal  @db.Decimal(15, 2)
+  required_date       DateTime
+  notes               String?
+  
+  // Relations
+  purchase_request    PurchaseRequest @relation(fields: [purchase_request_id], references: [id], onDelete: Cascade)
+  
+  @@index([purchase_request_id])
+  @@map("purchase_request_items")
+}
+
+model PurchaseOrder {
+  id              String   @id @default(uuid())
+  tenant_id       String
+  order_no        String
+  vendor_id       String
+  created_by      String
+  order_date      DateTime @default(now())
+  delivery_date   DateTime
+  delivery_address String?
+  status          String   @default("DRAFT")
+  total_amount    Decimal  @db.Decimal(15, 2)
+  currency        String   @default("JPY")
+  payment_terms   String?
+  notes           String?
+  
+  // Event sourcing
+  version         Int      @default(0)
+  events          Json[]
+  
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+  
+  // Relations
+  tenant          Tenant   @relation(fields: [tenant_id], references: [id])
+  vendor          Vendor   @relation(fields: [vendor_id], references: [id])
+  creator         User     @relation("OrderCreator", fields: [created_by], references: [id])
+  items           PurchaseOrderItem[]
+  
+  @@unique([tenant_id, order_no])
+  @@index([tenant_id, status, created_at])
+  @@index([vendor_id])
+  @@map("purchase_orders")
+}
+
+model PurchaseOrderItem {
+  id                String   @id @default(uuid())
+  purchase_order_id String
+  product_id        String
+  quantity          Decimal  @db.Decimal(15, 3)
+  unit_price        Decimal  @db.Decimal(15, 2)
+  total_price       Decimal  @db.Decimal(15, 2)
+  delivery_date     DateTime
+  notes             String?
+  
+  // Relations
+  purchase_order    PurchaseOrder @relation(fields: [purchase_order_id], references: [id], onDelete: Cascade)
+  
+  @@index([purchase_order_id])
+  @@map("purchase_order_items")
+}
+
+//============================================================
+// Inventory Management
+//============================================================
+
+model InventoryItem {
+  id              String   @id @default(uuid())
+  warehouse_id    String
+  product_id      String
+  quantity        Decimal  @db.Decimal(15, 3)
+  reserved_qty    Decimal  @db.Decimal(15, 3) @default(0)
+  reorder_point   Decimal? @db.Decimal(15, 3)
+  reorder_qty     Decimal? @db.Decimal(15, 3)
+  last_updated    DateTime @default(now())
+  
+  // Relations
+  warehouse       Warehouse @relation(fields: [warehouse_id], references: [id])
+  product         Product   @relation(fields: [product_id], references: [id])
+  
+  @@unique([warehouse_id, product_id])
+  @@index([product_id])
+  @@map("inventory_items")
+}
+
+//============================================================
+// Vendor Product Mapping
+//============================================================
+
+model VendorProduct {
+  id              String   @id @default(uuid())
+  vendor_id       String
+  product_id      String
+  vendor_sku      String?
+  unit_price      Decimal  @db.Decimal(15, 2)
+  lead_time_days  Int      @default(0)
+  min_order_qty   Decimal? @db.Decimal(15, 3)
+  is_preferred    Boolean  @default(false)
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+  
+  // Relations
+  vendor          Vendor   @relation(fields: [vendor_id], references: [id])
+  product         Product  @relation(fields: [product_id], references: [id])
+  
+  @@unique([vendor_id, product_id])
+  @@index([product_id])
+  @@map("vendor_products")
+}
+
+//============================================================
+// Audit Log
+//============================================================
+
+model AuditLog {
+  id              String   @id @default(uuid())
+  tenant_id       String?
+  user_id         String?
+  auth0_user_id   String?
+  action          String
+  resource        String
+  resource_id     String?
+  changes         Json?
+  ip_address      String?
+  user_agent      String?
+  created_at      DateTime @default(now())
+  
+  @@index([tenant_id, created_at])
+  @@index([resource, created_at])
+  @@index([user_id])
+  @@map("audit_logs")
+}
