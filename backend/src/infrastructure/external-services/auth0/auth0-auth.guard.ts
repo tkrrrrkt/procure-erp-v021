@@ -3,6 +3,7 @@ import { Reflector } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import * as jwt from 'jsonwebtoken';
 import * as jwksClient from 'jwks-rsa';
+import { UserSyncService } from '../../../application/services/user-sync.service';
 
 @Injectable()
 export class Auth0AuthGuard implements CanActivate {
@@ -15,6 +16,7 @@ export class Auth0AuthGuard implements CanActivate {
   constructor(
     private reflector: Reflector,
     private configService: ConfigService,
+    private userSyncService: UserSyncService,
   ) {
     // Auth0設定の取得
     this.auth0Domain = this.configService.get<string>('AUTH0_DOMAIN') || '';
@@ -96,8 +98,26 @@ export class Auth0AuthGuard implements CanActivate {
         this.logger.debug(`Organization validation passed: ${userOrgId}`);
       }
       
+      // **CRITICAL FIX**: Sync user with database during authentication
+      try {
+        const dbUser = await this.userSyncService.syncUser(userInfo);
+        this.logger.debug(`User sync completed for: ${userInfo.sub}, DB user ID: ${dbUser.id}, tenant: ${dbUser.tenant_id}`);
+        
+        // Attach both Auth0 and DB user information to request
+        request.user = {
+          ...userInfo,
+          dbUser: dbUser, // Include complete DB user information
+          id: dbUser.id, // Include DB user ID for convenience
+          app_approved: dbUser.app_approved, // Include approval status
+        };
+      } catch (syncError) {
+        this.logger.error(`User sync failed for ${userInfo.sub}: ${syncError.message}`);
+        // Still allow authentication but log the sync failure
+        // This prevents authentication failures due to DB issues
+        request.user = userInfo;
+      }
+      
       this.logger.debug(`Authentication successful for user: ${decodedToken.sub}`);
-      request.user = userInfo;
       return true;
     } catch (error) {
       this.logger.error(`Authentication failed: ${error.message}`);
