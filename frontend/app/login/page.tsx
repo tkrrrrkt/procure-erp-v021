@@ -1,8 +1,8 @@
 "use client"
 
 import type React from "react"
-import { useState, useEffect } from "react"
-import { useRouter } from "next/navigation"
+import { useState, useEffect, Suspense } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
 import { useAuth, useTenant } from "@/lib/auth/auth0-provider"
 
 interface Tenant {
@@ -10,6 +10,124 @@ interface Tenant {
   name: string
   domain: string
   primaryColor?: string
+}
+
+interface LoginFormProps {
+  email: string
+  setEmail: (email: string) => void
+  currentOrganization: string
+  setCurrentOrganization: (org: string) => void
+  isLoading: boolean
+  setIsLoading: (loading: boolean) => void
+  error: string
+  setError: (error: string) => void
+  loginWithRedirect: any
+  setSelectedTenant: (tenant: string) => void
+}
+
+// useSearchParams を使用するコンポーネントを分離
+function LoginFormWithParams(props: LoginFormProps) {
+  const searchParams = useSearchParams()
+  
+  useEffect(() => {
+    const organizationParam = searchParams.get('organization')
+    console.log('Organization param from useSearchParams:', organizationParam)
+    
+    if (organizationParam) {
+      props.setCurrentOrganization(organizationParam)
+      props.setSelectedTenant(organizationParam)
+      props.setError("") // エラーをクリア
+    } else {
+      props.setError("組織パラメータが必要です。正しいURLからアクセスしてください。")
+    }
+  }, [searchParams, props])
+
+  const handleAuth0Login = async () => {
+    props.setIsLoading(true)
+    props.setError("")
+
+    try {
+      if (!props.currentOrganization) {
+        throw new Error("組織が特定できません。正しいURLからアクセスしてください。")
+      }
+
+      // Auth0のUniversal Loginにリダイレクト（組織パラメータ付き）
+      // stateパラメータに組織情報を含める
+      const customState = btoa(`organization=${props.currentOrganization}`)
+      
+      if (props.email) {
+        await props.loginWithRedirect({
+          authorizationParams: {
+            organization: props.currentOrganization,
+            login_hint: props.email,
+            state: customState,
+          },
+          appState: { returnTo: '/dashboard' }
+        })
+      } else {
+        await props.loginWithRedirect({
+          authorizationParams: {
+            organization: props.currentOrganization,
+            state: customState,
+          },
+          appState: { returnTo: '/dashboard' }
+        })
+      }
+    } catch (err) {
+      props.setError(err instanceof Error ? err.message : "認証に失敗しました。再度お試しください。")
+      props.setIsLoading(false)
+    }
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    await handleAuth0Login()
+  }
+
+  return (
+    <form className="space-y-6" onSubmit={handleSubmit}>
+      <div>
+        <label htmlFor="email" className="block text-sm font-medium text-gray-700">
+          メールアドレス (オプション)
+        </label>
+        <div className="mt-1">
+          <input
+            id="email"
+            name="email"
+            type="email"
+            autoComplete="email"
+            placeholder="name@company.com"
+            value={props.email}
+            onChange={(e) => props.setEmail(e.target.value)}
+            className="appearance-none block w-full px-3 py-2 border border-gray-300 rounded-md placeholder-gray-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+          />
+        </div>
+        <p className="mt-2 text-sm text-gray-500">
+          メールアドレスを入力すると、組織内での認証が簡略化されます
+        </p>
+      </div>
+
+      <div>
+        <button
+          type="submit"
+          disabled={props.isLoading || !props.currentOrganization}
+          className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {props.isLoading ? (
+            <>
+              <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              認証中...
+            </>
+          ) : (
+            `${props.currentOrganization ? props.currentOrganization + ' 組織で' : ''}サインイン`
+          )}
+        </button>
+      </div>
+    </form>
+  )
 }
 
 export default function LoginPage() {
@@ -28,57 +146,6 @@ export default function LoginPage() {
       router.push('/dashboard')
     }
   }, [isAuthenticated, authLoading, router])
-
-  // URLパラメータから組織を自動検出
-  useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search)
-    const organizationParam = urlParams.get('organization')
-    
-    if (organizationParam) {
-      setCurrentOrganization(organizationParam)
-      setSelectedTenant(organizationParam)
-    } else {
-      // 組織パラメータがない場合はエラー
-      setError("組織パラメータが必要です。正しいURLからアクセスしてください。")
-    }
-  }, [setSelectedTenant])
-
-  const handleAuth0Login = async () => {
-    setIsLoading(true)
-    setError("")
-
-    try {
-      if (!currentOrganization) {
-        throw new Error("組織が特定できません。正しいURLからアクセスしてください。")
-      }
-
-      // Auth0のUniversal Loginにリダイレクト（組織パラメータ付き）
-      if (email) {
-        await loginWithRedirect({
-          authorizationParams: {
-            organization: currentOrganization, // URL由来の組織ID
-            login_hint: email,
-          },
-          appState: { returnTo: '/dashboard' }
-        })
-      } else {
-        await loginWithRedirect({
-          authorizationParams: {
-            organization: currentOrganization, // URL由来の組織ID
-          },
-          appState: { returnTo: '/dashboard' }
-        })
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "認証に失敗しました。再度お試しください。")
-      setIsLoading(false)
-    }
-  }
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    await handleAuth0Login()
-  }
 
   if (authLoading) {
     return (
@@ -125,48 +192,26 @@ export default function LoginPage() {
             </div>
           )}
 
-          <form className="space-y-6" onSubmit={handleSubmit}>
-            <div>
-              <label htmlFor="email" className="block text-sm font-medium text-gray-700">
-                メールアドレス (オプション)
-              </label>
-              <div className="mt-1">
-                <input
-                  id="email"
-                  name="email"
-                  type="email"
-                  autoComplete="email"
-                  placeholder="name@company.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="appearance-none block w-full px-3 py-2 border border-gray-300 rounded-md placeholder-gray-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
-                />
-              </div>
-              <p className="mt-2 text-sm text-gray-500">
-                メールアドレスを入力すると、組織内での認証が簡略化されます
-              </p>
+          <Suspense fallback={
+            <div className="animate-pulse">
+              <div className="h-4 bg-gray-200 rounded w-3/4 mb-4"></div>
+              <div className="h-10 bg-gray-200 rounded mb-4"></div>
+              <div className="h-10 bg-gray-200 rounded"></div>
             </div>
-
-            <div>
-              <button
-                type="submit"
-                disabled={isLoading || !currentOrganization}
-                className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isLoading ? (
-                  <>
-                    <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                    </svg>
-                    認証中...
-                  </>
-                ) : (
-                  `${currentOrganization ? currentOrganization + ' 組織で' : ''}サインイン`
-                )}
-              </button>
-            </div>
-          </form>
+          }>
+            <LoginFormWithParams
+              email={email}
+              setEmail={setEmail}
+              currentOrganization={currentOrganization}
+              setCurrentOrganization={setCurrentOrganization}
+              isLoading={isLoading}
+              setIsLoading={setIsLoading}
+              error={error}
+              setError={setError}
+              loginWithRedirect={loginWithRedirect}
+              setSelectedTenant={setSelectedTenant}
+            />
+          </Suspense>
 
           <div className="mt-6">
             <div className="text-center">

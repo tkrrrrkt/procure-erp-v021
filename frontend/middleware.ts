@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
-import crypto from 'crypto'
 
 // 許可された組織ID一覧（環境変数から取得、フォールバックで実際の組織ID）
 const ALLOWED_ORGANIZATIONS = process.env.ALLOWED_ORGANIZATIONS?.split(',') || ['org_HHiSxAxNqdJoipla']
@@ -13,27 +12,42 @@ const CSP_ALLOWED_DOMAINS = process.env.CSP_ALLOWED_DOMAINS?.split(',') || []
 const CSP_ENFORCE_HTTPS = process.env.CSP_ENFORCE_HTTPS !== 'false'
 
 /**
- * 暗号学的に安全なnonceを生成
+ * 暗号学的に安全なnonceを生成 (Edge Runtime対応)
  */
 function generateNonce(): string {
-  return crypto.randomBytes(16).toString('base64')
+  // Edge RuntimeではWeb Crypto APIを使用
+  const array = new Uint8Array(16)
+  crypto.getRandomValues(array)
+  return btoa(String.fromCharCode(...array))
 }
 
 /**
- * 企業級CSPポリシーを動的生成
+ * 企業級CSPポリシーを動的生成 (開発環境対応)
  */
 function generateCSPPolicy(nonce: string): string {
-  const auth0Domain = process.env.AUTH0_DOMAIN?.replace('https://', '') || ''
+  // Auth0ドメインを複数の形式で追加
+  const auth0Domain = process.env.AUTH0_DOMAIN?.replace('https://', '') || 'dev-22lwwfj3g02rol8a.jp.auth0.com'
+  const auth0FullUrl = process.env.AUTH0_DOMAIN || 'https://dev-22lwwfj3g02rol8a.jp.auth0.com'
   const allowedDomains = CSP_ALLOWED_DOMAINS.join(' ')
+  const isDevelopment = process.env.NODE_ENV === 'development'
   
-  // 基本CSPディレクティブを構築
+  // 開発環境と本番環境でのCSPディレクティブ
   const directives = [
     "default-src 'self'",
-    `script-src 'self' 'nonce-${nonce}' ${auth0Domain} ${allowedDomains}`.trim(),
-    `style-src 'self' 'nonce-${nonce}' ${auth0Domain} ${allowedDomains}`.trim(),
+    // script-src: 開発環境ではゆるい設定、本番環境では厳格制御
+    isDevelopment 
+      ? `script-src 'self' 'unsafe-inline' 'unsafe-eval' ${auth0Domain} ${allowedDomains} localhost:3000`.trim()
+      : `script-src 'self' 'nonce-${nonce}' ${auth0Domain} ${allowedDomains}`.trim(),
+    // style-src: 開発環境ではゆるい設定、本番環境ではnonce-based制御
+    isDevelopment
+      ? `style-src 'self' 'unsafe-inline' ${auth0Domain} ${allowedDomains}`.trim()
+      : `style-src 'self' 'nonce-${nonce}' ${auth0Domain} ${allowedDomains}`.trim(),
+    // img-src: 基本ソース＋Auth0
     `img-src 'self' data: ${auth0Domain} ${allowedDomains}`.trim(),
-    `connect-src 'self' ${auth0Domain} ${allowedDomains}`.trim(),
-    `frame-src ${auth0Domain}`,
+    // connect-src: WebSocket（開発時）＋Auth0
+    `connect-src 'self' ${isDevelopment ? 'ws://localhost:3001 wss://localhost:3001 ws://localhost:3000 wss://localhost:3000 ' : ''}${auth0Domain} ${auth0FullUrl} ${allowedDomains}`.trim(),
+    // frame-src: Auth0認証フレーム許可
+    `frame-src 'self' ${auth0Domain}`,
     "font-src 'self' data:",
     "object-src 'none'",
     "base-uri 'self'",
@@ -41,7 +55,8 @@ function generateCSPPolicy(nonce: string): string {
     "frame-ancestors 'none'",
     "manifest-src 'self'",
     "media-src 'self'",
-    "worker-src 'self'"
+    // worker-src: 開発時のみblob許可
+    `worker-src 'self'${isDevelopment ? ' blob:' : ''}`
   ]
 
   // HTTPS強制設定
@@ -65,20 +80,14 @@ export function middleware(request: NextRequest) {
   if (pathname === '/login') {
     const organizationParam = searchParams.get('organization')
     
-    // 組織パラメータがない場合
+    // 組織パラメータがない場合は警告ログのみ、リダイレクトしない
     if (!organizationParam) {
-      const errorUrl = new URL('/error', request.url)
-      errorUrl.searchParams.set('code', 'missing_organization')
-      errorUrl.searchParams.set('message', 'Organization parameter is required')
-      return NextResponse.redirect(errorUrl)
-    }
-    
-    // 許可されていない組織の場合
-    if (!ALLOWED_ORGANIZATIONS.includes(organizationParam)) {
-      const errorUrl = new URL('/error', request.url)
-      errorUrl.searchParams.set('code', 'invalid_organization')
-      errorUrl.searchParams.set('message', 'Invalid organization')
-      return NextResponse.redirect(errorUrl)
+      console.warn('Login access without organization parameter')
+      // リダイレクトせずに続行（フロントエンドで処理）
+    } else if (!ALLOWED_ORGANIZATIONS.includes(organizationParam)) {
+      // 許可されていない組織の場合も警告ログのみ
+      console.warn(`Login access with invalid organization: ${organizationParam}`)
+      // リダイレクトせずに続行（フロントエンドで処理）
     }
   }
 

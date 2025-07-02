@@ -54,10 +54,81 @@ function CallbackContent() {
           router.push('/dashboard')
         }
       } catch (err) {
+        console.log('=== AUTH ERROR DEBUG ===')
+        console.error('Full error object:', err)
+        console.error('Error name:', err instanceof Error ? err.name : 'Unknown')
+        console.error('Error message:', err instanceof Error ? err.message : 'Unknown error')
+        console.error('Error stack:', err instanceof Error ? err.stack : 'No stack')
+        console.log('Current URL:', window.location.href)
+        console.log('All URL parameters:')
+        for (const [key, value] of searchParams.entries()) {
+          console.log(`  ${key}: ${value}`)
+        }
         addDebugInfo(`Auth error: ${err instanceof Error ? err.message : 'Unknown error'}`)
-        console.error('Authentication error:', err)
+        
+        // stateパラメータから組織情報を取得
+        let organizationParam = ''
+        try {
+          const state = searchParams.get('state')
+          console.log('=== STATE PARAMETER DEBUG ===')
+          console.log('Raw state parameter:', state)
+          
+          if (state) {
+            try {
+              // Auth0のstateパラメータをデコードして組織情報を取得
+              const decodedState = atob(state)
+              console.log('Decoded state:', decodedState)
+              
+              // 複数のパターンで組織IDを検索
+              const patterns = [
+                /organization=([^&\s]+)/i,    // organization=value (新しい形式)
+                /org_[a-zA-Z0-9]+/,           // org_で始まる組織ID
+                /"org":"([^"]+)"/,            // JSON形式の"org":"value"
+                /tenant[=:]([^&\s]+)/i        // tenant=value または tenant:value
+              ]
+              
+              for (const pattern of patterns) {
+                const match = decodedState.match(pattern)
+                if (match) {
+                  const orgId = match[1] || match[0]
+                  console.log(`Found organization ID with pattern ${pattern}:`, orgId)
+                  
+                  // organization=org_xxxx または org_xxxx のどちらでもOK
+                  if (orgId.startsWith('org_') || (match[1] && match[1].startsWith('org_'))) {
+                    const finalOrgId = orgId.startsWith('org_') ? orgId : match[1]
+                    organizationParam = `&organization=${finalOrgId}`
+                    console.log('Successfully extracted organization:', finalOrgId)
+                    break
+                  }
+                }
+              }
+              
+              if (!organizationParam) {
+                console.log('No organization parameter found in decoded state')
+                console.log('Full decoded state content:', decodedState)
+              }
+            } catch (decodeError) {
+              console.log('Failed to decode base64 state:', decodeError)
+              console.log('Attempting to extract organization from raw state...')
+              
+              // rawなstateからも試してみる
+              const rawMatch = state.match(/org_[a-zA-Z0-9]+/)
+              if (rawMatch) {
+                organizationParam = `&organization=${rawMatch[0]}`
+                console.log('Found organization in raw state:', rawMatch[0])
+              }
+            }
+          } else {
+            console.log('No state parameter found in URL')
+          }
+        } catch (stateError) {
+          console.log('Error processing state parameter:', stateError)
+        }
+        
+        console.log('Final organization parameter:', organizationParam)
+        
         setTimeout(() => {
-          router.push('/login?error=callback_failed')
+          router.push(`/login?error=callback_failed${organizationParam}`)
         }, 2000)
       }
     }
@@ -128,7 +199,7 @@ function CallbackContent() {
             <div className="mb-2 font-semibold">認証状態:</div>
             <div>Loading: {isLoading ? 'Yes' : 'No'}</div>
             <div>Authenticated: {isAuthenticated ? 'Yes' : 'No'}</div>
-            <div>Error: {error ? error.message : 'None'}</div>
+            <div>Error: {error ? String(error) : 'None'}</div>
             
             <div className="mt-2 mb-2 font-semibold">処理ログ:</div>
             {debugInfo.map((info, index) => (
