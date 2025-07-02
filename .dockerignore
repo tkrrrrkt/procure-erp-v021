@@ -1,0 +1,512 @@
+# ================================================
+# ProcureERP Docker Ignore Configuration
+# 企業級ビルド最適化・セキュリティ強化
+# ================================================
+
+# ================================================
+# Git & Version Control
+# ================================================
+.git
+.gitignore
+.gitattributes
+.gitmodules
+.gitkeep
+**/.git
+**/.svn
+**/.hg
+
+# Git hooks and templates
+.git/hooks/*
+.git/objects
+.git/refs
+
+# ================================================
+# Node.js Dependencies
+# ================================================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.pnpm-debug.log*
+
+# Dependency directories
+**/node_modules/
+**/bower_components/
+**/jspm_packages/
+
+# Package managers
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+shrinkwrap.yaml
+
+# ================================================
+# Development & Build Artifacts
+# ================================================
+
+# Next.js build output
+.next/
+next-env.d.ts
+out/
+
+# NestJS build output
+dist/
+build/
+compiled/
+
+# TypeScript
+*.tsbuildinfo
+*.tsbuildinfo.*
+
+# Build directories
+**/dist/
+**/build/
+**/compiled/
+**/coverage/
+**/tmp/
+**/temp/
+**/.nyc_output/
+
+# ================================================
+# Environment & Configuration
+# ================================================
+
+# Environment files
+.env
+.env.local
+.env.development
+.env.development.local
+.env.test
+.env.test.local
+.env.production
+.env.production.local
+.env.staging
+.env.backup*
+
+# Configuration files
+config/local.json
+config/development.json
+config/test.json
+config/staging.json
+config/production.json
+
+# Secrets and credentials
+secrets/
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+credentials.json
+service-account.json
+
+# ================================================
+# IDE & Editor Files
+# ================================================
+
+# Visual Studio Code
+.vscode/
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+
+# JetBrains IDEs
+.idea/
+*.iml
+*.ipr
+*.iws
+.idea_modules/
+
+# Sublime Text
+*.sublime-workspace
+*.sublime-project
+
+# Vim
+*.swp
+*.swo
+*~
+.vim/
+viminfo
+
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+auto-save-list
+tramp
+.\#*
+
+# Atom
+.atom/
+
+# ================================================
+# Operating System Files
+# ================================================
+
+# macOS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Icon?
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# Linux
+*~
+.nfs*
+
+# ================================================
+# Logs & Debug Files
+# ================================================
+
+# Application logs
+logs/
+*.log
+*.log.*
+log-*.txt
+debug.log
+error.log
+access.log
+combined.log
+
+# Runtime data
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage/
+.nyc_output/
+*.lcov
+.coverage
+htmlcov/
+
+# Crash dumps
+*.stackdump
+crash.log
+
+# ================================================
+# Database & Cache Files
+# ================================================
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
+
+# PostgreSQL dumps
+*.sql
+*.dump
+pg_dump_*
+
+# Redis dumps
+dump.rdb
+*.aof
+
+# Cache directories
+.cache/
+cache/
+.tmp/
+tmp/
+
+# ================================================
+# Testing & Quality Assurance
+# ================================================
+
+# Test results
+test-results/
+junit.xml
+coverage.xml
+*.tap
+.coverage
+.pytest_cache/
+__pycache__/
+
+# Benchmark results
+benchmark/
+*.bench
+
+# Linting and formatting
+.eslintcache
+.stylelintcache
+.prettiercache
+
+# ================================================
+# Documentation & Media
+# ================================================
+
+# Documentation build
+docs/_build/
+site/
+_site/
+
+# Media files (exclude from Docker if not needed)
+*.mp4
+*.avi
+*.mov
+*.wmv
+*.flv
+*.webm
+*.mkv
+
+# Large asset files
+*.zip
+*.tar
+*.tar.gz
+*.rar
+*.7z
+
+# ================================================
+# Backup & Archive Files
+# ================================================
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+*.swp
+*.tmp
+*~
+
+# Archive files
+*.tar.gz
+*.tgz
+*.tar.bz2
+*.tbz2
+*.tar.xz
+*.txz
+
+# ================================================
+# Security & Credentials
+# ================================================
+
+# SSH keys
+id_rsa
+id_rsa.pub
+id_ed25519
+id_ed25519.pub
+known_hosts
+
+# SSL certificates (unless needed in container)
+ssl/
+certificates/
+*.crt
+*.key
+*.pem
+*.cer
+*.p7b
+*.p7r
+*.spc
+
+# AWS credentials
+.aws/
+aws-credentials
+
+# Docker secrets (if not using Docker secrets properly)
+docker-secrets/
+
+# ================================================
+# Development Tools
+# ================================================
+
+# Webpack
+.webpack/
+
+# Rollup
+.rollup.cache/
+
+# Vite
+.vite/
+
+# ESBuild
+.esbuild/
+
+# Browserslist
+.browserslistrc
+
+# ================================================
+# Package Managers & Dependencies
+# ================================================
+
+# Yarn
+.yarn/cache
+.yarn/unplugged
+.yarn/build-state.yml
+.yarn/install-state.gz
+.pnp.*
+
+# pnpm
+.pnpm-store/
+
+# Rush
+common/temp/
+common/deploy/
+
+# ================================================
+# Runtime & Process Files
+# ================================================
+
+# PM2
+.pm2/
+pm2.json
+ecosystem.config.js
+
+# Forever
+.forever/
+
+# Nodemon
+nodemon.json
+
+# ================================================
+# Cloud & Deployment
+# ================================================
+
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+terraform.tfvars
+
+# Kubernetes
+*.kubeconfig
+
+# Docker Compose overrides
+docker-compose.override.yml
+docker-compose.*.yml.local
+
+# Helm
+.helm/
+
+# ================================================
+# Monitoring & Observability
+# ================================================
+
+# New Relic
+newrelic_agent.log
+newrelic.ini
+
+# Application Performance Monitoring
+apm/
+
+# Metrics and monitoring
+metrics/
+monitoring/
+
+# ================================================
+# Custom Application Files
+# ================================================
+
+# Uploads directory (development)
+uploads/
+attachments/
+files/
+
+# Generated reports
+reports/
+exports/
+
+# User data
+user-data/
+user-uploads/
+
+# ================================================
+# External Services
+# ================================================
+
+# Firebase
+.firebase/
+firebase-debug.log
+firebase-debug.*.log
+
+# Vercel
+.vercel
+
+# Netlify
+.netlify
+
+# ================================================
+# Miscellaneous
+# ================================================
+
+# Runtime configuration
+runtime/
+
+# Temporary files
+.tmp/
+temp/
+
+# Lock files (may want to include in some cases)
+*.lock
+
+# Editor directories and files
+.history/
+.vscode-test/
+
+# OS generated files
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# ================================================
+# Project Specific Exclusions
+# ================================================
+
+# Documentation source that shouldn't be in container
+README.md
+CHANGELOG.md
+CONTRIBUTING.md
+LICENSE
+docs/
+
+# Development configuration
+.env.example
+.env.template
+docker-compose.dev.yml.example
+
+# Scripts that are not needed in production
+scripts/dev/
+scripts/local/
+scripts/setup/
+
+# Test fixtures and mock data
+fixtures/
+mocks/
+test-data/
+
+# Development databases
+dev.db
+test.db
+local.db
+
+# ================================================
+# Security Notes
+# ================================================
+# This .dockerignore file is designed to:
+# 1. Minimize Docker image size
+# 2. Exclude sensitive configuration files
+# 3. Prevent accidental inclusion of development artifacts
+# 4. Improve build performance
+# 5. Enhance security by excluding unnecessary files
+# 
+# Review and customize based on your specific requirements
+# ================================================

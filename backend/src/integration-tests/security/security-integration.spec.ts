@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import request from 'supertest';
+import * as request from 'supertest';
 import { AppModule } from '../../app.module';
 import * as jwt from 'jsonwebtoken';
 
@@ -30,23 +30,42 @@ describe('Security Integration Tests', () => {
     
     await app.init();
 
-    // テスト用JWTトークン生成
+    // テスト用JWTトークン生成（Auth0準拠形式）
     const jwtSecret = configService.get<string>('JWT_SECRET') || 'test-secret';
-    const validPayload = {
-      sub: 'test-user-123',
-      email: 'test@example.com',
-      tenantId: 'tenant-123',
-      organizationId: 'org_HHiSxAxNqdJoipla',
-      permissions: ['read:profile', 'write:profile'],
+    const namespace = 'https://api.procure-erp.com/';
+    const orgId = 'org_HHiSxAxNqdJoipla';
+    const tenantId = 'tenant-123';
+    
+    const basePayload = {
       iat: Math.floor(Date.now() / 1000),
       exp: Math.floor(Date.now() / 1000) + 3600,
+      aud: 'https://api.procure-erp.com',
+      iss: 'https://dev-procure-erp.auth0.com/',
+      scope: 'openid profile email',
+      org_id: orgId,
+      [`${namespace}org_id`]: orgId,
+      [`${namespace}org_name`]: 'Test Organization',
+      [`${namespace}tenant_id`]: tenantId,
+    };
+
+    const validPayload = {
+      ...basePayload,
+      sub: 'auth0|test-user-123',
+      email: 'test@example.com',
+      name: 'Test User',
+      picture: 'https://example.com/user.jpg',
+      'https://app.procure-erp.com/roles': ['employee'],
+      'https://app.procure-erp.com/permissions': ['read:profile', 'write:profile'],
     };
 
     const adminPayload = {
-      ...validPayload,
-      sub: 'admin-user-456',
-      permissions: ['admin:all', 'read:all', 'write:all'],
-      roles: ['admin'],
+      ...basePayload,
+      sub: 'auth0|admin-user-456',
+      email: 'admin@example.com',
+      name: 'Admin User',
+      picture: 'https://example.com/admin.jpg',
+      'https://app.procure-erp.com/roles': ['admin'],
+      'https://app.procure-erp.com/permissions': ['admin:all', 'read:all', 'write:all'],
     };
 
     validJwtToken = jwt.sign(validPayload, jwtSecret);

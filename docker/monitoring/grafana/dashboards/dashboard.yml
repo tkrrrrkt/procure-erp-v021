@@ -1,0 +1,18 @@
+# ================================================
+# Grafana Dashboard Provisioning
+# ProcureERPダッシュボード設定
+# ================================================
+
+apiVersion: 1
+
+providers:
+  - name: 'ProcureERP Dashboards'
+    orgId: 1
+    folder: 'ProcureERP'
+    type: file
+    disableDeletion: false
+    editable: true
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/json

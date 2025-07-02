@@ -1,0 +1,68 @@
+# ================================================
+# Prometheus Configuration for ProcureERP
+# 監視・メトリクス収集設定
+# ================================================
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    monitor: 'procure-erp-monitor'
+    environment: 'production'
+
+# ルール設定
+rule_files:
+  - "alert_rules.yml"
+
+# アラート管理設定
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          - alertmanager:9093
+
+# スクレイプ設定
+scrape_configs:
+  # Prometheus自体の監視
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Node Exporter (システムメトリクス)
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+
+  # ProcureERP Backend
+  - job_name: 'procure-erp-backend'
+    metrics_path: '/api/metrics'
+    static_configs:
+      - targets: ['backend:3001']
+    scrape_interval: 30s
+
+  # ProcureERP Frontend
+  - job_name: 'procure-erp-frontend'
+    metrics_path: '/_next/static/metrics'
+    static_configs:
+      - targets: ['frontend:3000']
+    scrape_interval: 30s
+
+  # PostgreSQL
+  - job_name: 'postgres-exporter'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+
+  # Redis
+  - job_name: 'redis-exporter'
+    static_configs:
+      - targets: ['redis-exporter:9121']
+
+  # Nginx
+  - job_name: 'nginx-exporter'
+    static_configs:
+      - targets: ['nginx-exporter:9113']
+
+  # Docker
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['cadvisor:8080']

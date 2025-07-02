@@ -1,0 +1,248 @@
+version: '3.8'
+
+# ================================================
+# ProcureERP Docker Compose - Development Override
+# 開発環境専用設定・デバッグ・ホットリロード対応
+# ================================================
+
+services:
+  # ================================================
+  # Frontend - 開発モード (Hot Reload)
+  # ================================================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: development
+    environment:
+      - NODE_ENV=development
+      - NEXT_PUBLIC_DEV_MODE=true
+      - CHOKIDAR_USEPOLLING=true
+      - WATCHPACK_POLLING=true
+    volumes:
+      - ./frontend:/app:cached
+      - /app/node_modules
+      - /app/.next
+    ports:
+      - "3000:3000"
+    command: npm run dev
+    stdin_open: true
+    tty: true
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 60s
+      timeout: 30s
+      retries: 3
+      start_period: 120s
+
+  # ================================================
+  # Backend - 開発モード (Hot Reload)
+  # ================================================
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: development
+    environment:
+      - NODE_ENV=development
+      - DEBUG=true
+      - LOG_LEVEL=debug
+    volumes:
+      - ./backend:/app:cached
+      - /app/node_modules
+      - /app/dist
+    ports:
+      - "3001:3001"
+      - "9229:9229"  # Node.js Debug Port
+    command: npm run start:dev
+    stdin_open: true
+    tty: true
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 60s
+      timeout: 30s
+      retries: 3
+      start_period: 120s
+
+  # ================================================
+  # PostgreSQL - 開発モード (ポート公開)
+  # ================================================
+  postgres:
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=procure_erp_dev_db
+      - POSTGRES_USER=dev_user
+      - POSTGRES_PASSWORD=dev_password_123
+    volumes:
+      - procure-erp-postgres-dev-data:/var/lib/postgresql/data
+      - ./docker/postgres/init-dev.sql:/docker-entrypoint-initdb.d/init-dev.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dev_user -d procure_erp_dev_db"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # ================================================
+  # Redis - 開発モード (ポート公開)
+  # ================================================
+  redis:
+    ports:
+      - "6379:6379"
+    volumes:
+      - procure-erp-redis-dev-data:/data
+    command: redis-server --appendonly yes --save ""
+
+  # ================================================
+  # Nginx - 開発モード (シンプル設定)
+  # ================================================
+  nginx:
+    volumes:
+      - ./docker/nginx/nginx.dev.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "80:80"
+
+  # ================================================
+  # Mailhog - 開発環境メールキャッチャー
+  # ================================================
+  mailhog:
+    image: mailhog/mailhog:v1.0.1
+    container_name: procure-erp-mailhog
+    restart: unless-stopped
+    ports:
+      - "1025:1025"  # SMTP Port
+      - "8025:8025"  # Web UI Port
+    networks:
+      - procure-erp-network
+    environment:
+      - MH_STORAGE=maildir
+      - MH_MAILDIR_PATH=/maildir
+    volumes:
+      - procure-erp-mailhog-data:/maildir
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8025"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ================================================
+  # pgAdmin - PostgreSQL管理ツール
+  # ================================================
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: procure-erp-pgadmin
+    restart: unless-stopped
+    ports:
+      - "5050:80"
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=admin@procure-erp.com
+      - PGADMIN_DEFAULT_PASSWORD=admin123
+      - PGADMIN_CONFIG_SERVER_MODE=False
+      - PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED=False
+    volumes:
+      - procure-erp-pgadmin-data:/var/lib/pgadmin
+      - ./docker/pgadmin/servers.json:/pgadmin4/servers.json:ro
+    networks:
+      - procure-erp-network
+    depends_on:
+      - postgres
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/misc/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ================================================
+  # Redis Commander - Redis管理ツール
+  # ================================================
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: procure-erp-redis-commander
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=
+    networks:
+      - procure-erp-network
+    depends_on:
+      - redis
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8081"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ================================================
+  # Docs - Swagger UI & API Documentation
+  # ================================================
+  docs:
+    image: swaggerapi/swagger-ui:latest
+    container_name: procure-erp-docs
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - SWAGGER_JSON=/app/openapi.json
+      - BASE_URL=/docs
+    volumes:
+      - ./docs/openapi.json:/app/openapi.json:ro
+    networks:
+      - procure-erp-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+# ================================================
+# Development Volumes
+# ================================================
+volumes:
+  procure-erp-postgres-dev-data:
+    driver: local
+    name: procure-erp-postgres-dev-data
+
+  procure-erp-redis-dev-data:
+    driver: local
+    name: procure-erp-redis-dev-data
+
+  procure-erp-mailhog-data:
+    driver: local
+    name: procure-erp-mailhog-data
+
+  procure-erp-pgadmin-data:
+    driver: local
+    name: procure-erp-pgadmin-data
+
+# ================================================
+# Development Configuration Notes
+# ================================================
+# 開発環境での使用方法:
+# docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+#
+# 開発環境の特徴:
+# 1. ホットリロード対応 (Frontend/Backend)
+# 2. デバッグポート公開 (Node.js: 9229)
+# 3. データベース管理ツール (pgAdmin: 5050)
+# 4. Redis管理ツール (Redis Commander: 8081)
+# 5. メールキャッチャー (Mailhog: 8025)
+# 6. API文書化 (Swagger UI: 8080)
+# 7. ログレベル: DEBUG
+# 8. 開発用データベース・認証情報使用
+# 9. SSL無効化 (開発の利便性向上)
+# 10. ファイル監視・自動再起動設定
+#
+# アクセス情報:
+# - Frontend: http://localhost:3000
+# - Backend API: http://localhost:3001
+# - PostgreSQL: localhost:5432
+# - Redis: localhost:6379
+# - pgAdmin: http://localhost:5050
+# - Redis Commander: http://localhost:8081
+# - Mailhog UI: http://localhost:8025
+# - Swagger UI: http://localhost:8080
+# ================================================

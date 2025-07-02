@@ -1,0 +1,127 @@
+# ================================================
+# Prometheus Alert Rules for ProcureERP
+# 監視アラートルール定義
+# ================================================
+
+groups:
+  # システムレベルアラート
+  - name: system_alerts
+    rules:
+      # 高CPU使用率
+      - alert: HighCPUUsage
+        expr: 100 - (avg by(instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "高CPU使用率が検出されました"
+          description: "{{ $labels.instance }} のCPU使用率が80%を超えています (現在: {{ $value }}%)"
+
+      # 高メモリ使用率
+      - alert: HighMemoryUsage
+        expr: (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "高メモリ使用率が検出されました"
+          description: "{{ $labels.instance }} のメモリ使用率が85%を超えています (現在: {{ $value }}%)"
+
+      # ディスク容量不足
+      - alert: DiskSpaceLow
+        expr: (node_filesystem_size_bytes - node_filesystem_free_bytes) / node_filesystem_size_bytes * 100 > 90
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "ディスク容量不足"
+          description: "{{ $labels.instance }} のディスク使用率が90%を超えています"
+
+  # アプリケーションレベルアラート
+  - name: application_alerts
+    rules:
+      # バックエンドサービス停止
+      - alert: BackendServiceDown
+        expr: up{job="procure-erp-backend"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "ProcureERP バックエンドサービスが停止しています"
+          description: "バックエンドサービスへの接続が失敗しています"
+
+      # フロントエンドサービス停止
+      - alert: FrontendServiceDown
+        expr: up{job="procure-erp-frontend"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "ProcureERP フロントエンドサービスが停止しています"
+          description: "フロントエンドサービスへの接続が失敗しています"
+
+      # 高レスポンス時間
+      - alert: HighResponseTime
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "レスポンス時間が遅延しています"
+          description: "95パーセンタイルのレスポンス時間が2秒を超えています"
+
+      # 高エラー率
+      - alert: HighErrorRate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) * 100 > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "高エラー率が検出されました"
+          description: "5xxエラーの発生率が5%を超えています"
+
+  # データベースアラート
+  - name: database_alerts
+    rules:
+      # PostgreSQL接続数過多
+      - alert: PostgreSQLHighConnections
+        expr: pg_stat_database_numbackends / pg_settings_max_connections * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "PostgreSQL接続数が高くなっています"
+          description: "アクティブ接続数が最大接続数の80%を超えています"
+
+      # Redis接続失敗
+      - alert: RedisConnectionFailed
+        expr: up{job="redis-exporter"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Redisサービスが利用できません"
+          description: "Redisサービスへの接続が失敗しています"
+
+  # セキュリティアラート
+  - name: security_alerts
+    rules:
+      # レート制限発動
+      - alert: RateLimitTriggered
+        expr: increase(rate_limit_exceeded_total[5m]) > 50
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "レート制限が頻繁に発動しています"
+          description: "過去5分間でレート制限が50回以上発動しました"
+
+      # 認証失敗増加
+      - alert: AuthenticationFailureSpike
+        expr: increase(auth_failures_total[5m]) > 20
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "認証失敗が急増しています"
+          description: "過去5分間で認証失敗が20回以上発生しました"
