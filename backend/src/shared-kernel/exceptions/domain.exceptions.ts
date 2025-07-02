@@ -35,11 +35,10 @@ export class EntityNotFoundException extends DomainException {
  */
 export class InsufficientPermissionsException extends DomainException {
   constructor(action: string, resource: string) {
-    super(
-      `Insufficient permissions to ${action} ${resource}`,
-      'INSUFFICIENT_PERMISSIONS',
-      { action, resource },
-    );
+    super(`Insufficient permissions to ${action} ${resource}`, 'INSUFFICIENT_PERMISSIONS', {
+      action,
+      resource,
+    });
   }
 }
 

@@ -221,7 +221,7 @@ export default function BulkPurchasePage() {
       // Display success message or update the UI
       alert("選択された発注に対する仕入処理が完了しました。")
     }, 2000)
-  }
+  };
 
   const selectedCount = purchaseOrderItems.filter((item) => item.selected).length
 
@@ -691,4 +691,8 @@ export default function BulkPurchasePage() {
               )}
             </AlertDialogAction>
           </AlertDialogFooter>
-        </Aler
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}

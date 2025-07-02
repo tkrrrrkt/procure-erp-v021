@@ -1,6 +1,6 @@
 /**
  * Purchase Request Repository Interface
- * 
+ *
  * This interface defines the contract for purchase request persistence.
  * The actual implementation will be in the infrastructure layer.
  */

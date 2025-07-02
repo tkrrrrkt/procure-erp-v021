@@ -19,7 +19,7 @@ export class UserSyncService {
   async syncUser(auth0User: AuthenticatedUser): Promise<UserWithTenant> {
     try {
       const auth0UserId = auth0User.sub;
-      
+
       // Auth0からの組織情報を取得
       const organizationInfo = {
         org_id: auth0User.org_id,
@@ -56,9 +56,12 @@ export class UserSyncService {
   /**
    * 新規ユーザーをDBに作成
    */
-  private async createNewUser(auth0User: AuthenticatedUser, organizationInfo: any): Promise<UserWithTenant> {
+  private async createNewUser(
+    auth0User: AuthenticatedUser,
+    organizationInfo: any,
+  ): Promise<UserWithTenant> {
     const [firstName, lastName] = this.parseUserName(auth0User);
-    
+
     // テナント情報の取得または作成
     let tenantId = organizationInfo.tenant_id;
     if (organizationInfo.org_id && !tenantId) {
@@ -90,12 +93,12 @@ export class UserSyncService {
    * 既存ユーザーの更新
    */
   private async updateExistingUser(
-    existingUser: UserWithTenant, 
-    auth0User: AuthenticatedUser, 
-    organizationInfo: any
+    existingUser: UserWithTenant,
+    auth0User: AuthenticatedUser,
+    organizationInfo: any,
   ): Promise<UserWithTenant> {
     const [firstName, lastName] = this.parseUserName(auth0User);
-    
+
     // 組織情報が変更された場合の処理
     let tenantId = existingUser.tenant_id;
     if (organizationInfo.org_id && organizationInfo.tenant_id !== existingUser.tenant_id) {
@@ -140,13 +143,13 @@ export class UserSyncService {
     }
 
     const localPart = auth0User.email.split('@')[0];
-    
+
     // 一般的な命名パターンを想定
     if (localPart.includes('.')) {
       const parts = localPart.split('.');
       return [parts[0], parts.slice(1).join(' ')];
     }
-    
+
     return [localPart, ''];
   }
 
@@ -155,7 +158,7 @@ export class UserSyncService {
    */
   private async findOrCreateTenant(organizationInfo: any): Promise<Tenant> {
     const tenantName = organizationInfo.org_name || `Organization ${organizationInfo.org_id}`;
-    
+
     // 既存テナント検索（名前で検索）
     let tenant = await this.prisma.tenant.findFirst({
       where: {
@@ -176,7 +179,7 @@ export class UserSyncService {
           updated_at: new Date(),
         },
       });
-      
+
       this.logger.log(`Created new tenant: ${tenant.name} (${tenant.id})`);
     }
 
@@ -188,9 +191,9 @@ export class UserSyncService {
    */
   getUserPermissions(user: any): string[] {
     if (!user.roles) return [];
-    
+
     const permissions = new Set<string>();
-    
+
     user.roles.forEach((userRole: any) => {
       if (userRole.role && userRole.role.permissions) {
         userRole.role.permissions.forEach((rolePermission: any) => {
@@ -200,7 +203,7 @@ export class UserSyncService {
         });
       }
     });
-    
+
     return Array.from(permissions);
   }
 }

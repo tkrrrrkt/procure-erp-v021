@@ -1,8 +1,9 @@
 import { Module, Global } from '@nestjs/common';
+import { UserSyncService } from '../application/services/user-sync.service';
 
 @Global()
 @Module({
-  providers: [],
-  exports: [],
+  providers: [UserSyncService],
+  exports: [UserSyncService],
 })
 export class SharedModule {}

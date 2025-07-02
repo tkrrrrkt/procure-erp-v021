@@ -1,4 +1,10 @@
-import { Injectable, CanActivate, ExecutionContext, UnauthorizedException, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  CanActivate,
+  ExecutionContext,
+  UnauthorizedException,
+  Logger,
+} from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import * as jwt from 'jsonwebtoken';
@@ -21,32 +27,35 @@ export class Auth0AuthGuard implements CanActivate {
     // Auth0設定の取得
     this.auth0Domain = this.configService.get<string>('AUTH0_DOMAIN') || '';
     this.auth0Audience = this.configService.get<string>('AUTH0_AUDIENCE') || '';
-    
+
     if (!this.auth0Domain || !this.auth0Audience) {
       this.logger.error('AUTH0_DOMAIN and AUTH0_AUDIENCE must be configured');
       throw new Error('AUTH0_DOMAIN and AUTH0_AUDIENCE must be configured');
     }
-    
+
     // 許可された組織IDを環境変数から取得
     const allowedOrgsEnv = this.configService.get<string>('ALLOWED_ORGANIZATIONS') || '';
-    this.allowedOrganizations = allowedOrgsEnv.split(',').map(org => org.trim()).filter(org => org);
-    
+    this.allowedOrganizations = allowedOrgsEnv
+      .split(',')
+      .map((org) => org.trim())
+      .filter((org) => org);
+
     if (this.allowedOrganizations.length === 0) {
       this.logger.warn('No ALLOWED_ORGANIZATIONS configured - all organizations will be allowed');
     } else {
       this.logger.log(`Allowed organizations: ${this.allowedOrganizations.join(', ')}`);
     }
-    
+
     // Auth0ドメインからHTTPSプロトコルを除去
     this.auth0Domain = this.auth0Domain.replace('https://', '').replace('/', '');
-    
+
     this.jwksClient = jwksClient({
       jwksUri: `https://${this.auth0Domain}/.well-known/jwks.json`,
       cache: true,
       rateLimit: true,
       jwksRequestsPerMinute: 5,
     });
-    
+
     this.logger.log(`Auth0 Guard initialized with domain: ${this.auth0Domain}`);
   }
 
@@ -71,7 +80,7 @@ export class Auth0AuthGuard implements CanActivate {
 
     try {
       const decodedToken = await this.verifyToken(token);
-      
+
       // Attach user information to request
       const namespace = 'https://api.procure-erp.com/';
       const userInfo = {
@@ -85,24 +94,29 @@ export class Auth0AuthGuard implements CanActivate {
         scope: decodedToken.scope?.split(' ') || [],
         org_id: decodedToken[`${namespace}org_id`] || null,
         org_name: decodedToken[`${namespace}org_name`] || null,
-        tenant_id: decodedToken[`${namespace}tenant_id`] || decodedToken[`${namespace}org_id`] || null,
+        tenant_id:
+          decodedToken[`${namespace}tenant_id`] || decodedToken[`${namespace}org_id`] || null,
       };
-      
+
       // 組織ID検証（環境変数で許可された組織のみ）
       if (this.allowedOrganizations.length > 0) {
         const userOrgId = userInfo.org_id || userInfo.organization;
         if (!userOrgId || !this.allowedOrganizations.includes(userOrgId)) {
-          this.logger.warn(`Access denied for organization: ${userOrgId}. Allowed: ${this.allowedOrganizations.join(', ')}`);
+          this.logger.warn(
+            `Access denied for organization: ${userOrgId}. Allowed: ${this.allowedOrganizations.join(', ')}`,
+          );
           throw new UnauthorizedException('Access denied: Organization not allowed');
         }
         this.logger.debug(`Organization validation passed: ${userOrgId}`);
       }
-      
+
       // **CRITICAL FIX**: Sync user with database during authentication
       try {
         const dbUser = await this.userSyncService.syncUser(userInfo);
-        this.logger.debug(`User sync completed for: ${userInfo.sub}, DB user ID: ${dbUser.id}, tenant: ${dbUser.tenant_id}`);
-        
+        this.logger.debug(
+          `User sync completed for: ${userInfo.sub}, DB user ID: ${dbUser.id}, tenant: ${dbUser.tenant_id}`,
+        );
+
         // Attach both Auth0 and DB user information to request
         request.user = {
           ...userInfo,
@@ -116,7 +130,7 @@ export class Auth0AuthGuard implements CanActivate {
         // This prevents authentication failures due to DB issues
         request.user = userInfo;
       }
-      
+
       this.logger.debug(`Authentication successful for user: ${decodedToken.sub}`);
       return true;
     } catch (error) {
@@ -134,7 +148,7 @@ export class Auth0AuthGuard implements CanActivate {
     return new Promise((resolve, reject) => {
       // Decode the token without verification to get the header
       const decodedHeader = jwt.decode(token, { complete: true });
-      
+
       if (!decodedHeader || !decodedHeader.header.kid) {
         return reject(new Error('Invalid token header'));
       }
@@ -147,7 +161,7 @@ export class Auth0AuthGuard implements CanActivate {
         }
 
         const signingKey = key?.getPublicKey();
-        
+
         if (!signingKey) {
           this.logger.error('Failed to get public key from signing key');
           return reject(new Error('Failed to get public key'));

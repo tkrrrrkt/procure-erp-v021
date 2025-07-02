@@ -2,12 +2,9 @@
 
 import { useState } from "react"
 import { useRouter } from "next/navigation"
-import { zodResolver } from "@hookform/resolvers/zod"
-import { useForm } from "react-hook-form"
-import { z } from "zod"
-import { Save, X } from "lucide-react"
+import { Save, X, Shield, CheckCircle2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardFooter } from "@/components/ui/card"
+import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -15,32 +12,14 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Textarea } from "@/components/ui/textarea"
 import { Combobox } from "@/components/ui/combobox"
+import { Badge } from "@/components/ui/badge"
+import { Alert, AlertDescription } from "@/components/ui/alert"
+import { createVendorSchema, CreateVendorFormData } from "@/lib/validation/schemas"
+import { useValidatedForm, useFormErrorHandler } from "@/hooks/useValidatedForm"
+import { ClientSanitizer } from "@/lib/validation/sanitizer"
 
-// フォームのスキーマ定義
-const formSchema = z.object({
-  code: z.string().min(1, { message: "仕入先コードを入力してください" }),
-  name: z.string().min(1, { message: "仕入先名を入力してください" }),
-  shortName: z.string().min(1, { message: "仕入先略名を入力してください" }),
-  kanaName: z.string().min(1, { message: "仕入先カナ名を入力してください" }),
-  postalCode: z.string().regex(/^\d{3}-?\d{4}$|^\d{7}$/, { message: "正しい郵便番号を入力してください" }),
-  prefecture: z.string().min(1, { message: "都道府県を選択してください" }),
-  city: z.string().min(1, { message: "市区町村を入力してください" }),
-  address: z.string().min(1, { message: "場所名を入力してください" }),
-  building: z.string().optional(),
-  phone: z.string().min(1, { message: "電話番号を入力してください" }),
-  fax: z.string().optional(),
-  email: z.string().email({ message: "正しいメールアドレスを入力してください" }).optional(),
-  contactPerson: z.string().optional(),
-  contactPhone: z.string().optional(),
-  notes: z.string().optional(),
-  roundingMethod: z.enum(["truncate", "round", "ceiling"], {
-    required_error: "金額丸めフラグを選択してください",
-  }),
-  employeeCode: z.string().optional(),
-  isActive: z.boolean().default(true),
-})
-
-type FormValues = z.infer<typeof formSchema>
+// 企業級検証スキーマ使用（バックエンドDTO完全同期）
+type FormValues = CreateVendorFormData
 
 // 都道府県リスト
 const prefectures = [
@@ -104,40 +83,68 @@ const employees = [
 
 export default function NewVendorPage() {
   const router = useRouter()
+  const [isSubmitting, setIsSubmitting] = useState(false)
   const [useHyphen, setUseHyphen] = useState(true)
+  const [sanitizationStats, setSanitizationStats] = useState(ClientSanitizer.getStats())
+  const { handleValidationErrors, handleSanitizationComplete } = useFormErrorHandler()
 
-  // フォームの初期化
-  const form = useForm<FormValues>({
-    resolver: zodResolver(formSchema),
+  // 企業級検証・サニタイゼーション統合フォーム
+  const form = useValidatedForm({
+    schema: createVendorSchema,
     defaultValues: {
-      code: "",
       name: "",
-      shortName: "",
-      kanaName: "",
-      postalCode: "",
-      prefecture: "",
-      city: "",
-      address: "",
-      building: "",
+      code: "",
+      kana_name: "",
+      email: "",
       phone: "",
       fax: "",
-      email: "",
-      contactPerson: "",
-      contactPhone: "",
+      postal_code: "",
+      address: "",
+      website: "",
+      business_categories: [],
       notes: "",
-      roundingMethod: "truncate",
-      employeeCode: "",
-      isActive: true,
+      is_active: true,
     },
+    sanitizationOptions: {
+      stripHtml: true,
+      trim: true,
+      maxLength: 1000,
+      escapeSql: true,
+    },
+    onValidationError: handleValidationErrors,
+    onSanitizationComplete: (data) => {
+      handleSanitizationComplete(data)
+      setSanitizationStats(ClientSanitizer.getStats())
+    },
+    enableRealTimeValidation: true,
+    autoSanitize: true,
   })
 
   // フォーム送信処理
-  function onSubmit(data: FormValues) {
-    console.log(data)
-    // 実際のアプリケーションではここでAPIを呼び出して仕入先データを保存
-    alert("仕入先データが登録されました")
-    router.push("/vendors")
-  }
+  const onSubmit = form.handleSafeSubmit(
+    async (values: FormValues) => {
+      setIsSubmitting(true)
+      try {
+        console.log('🔒 企業級検証済みベンダーデータ:', values)
+        
+        // 最終サニタイゼーション統計更新
+        setSanitizationStats(ClientSanitizer.getStats())
+        
+        // バックエンドAPI呼び出し（既に検証・サニタイズ済み）
+        // await createVendor(values)
+        
+        router.push('/vendors')
+      } catch (error) {
+        console.error('🚨 ベンダー作成エラー:', error)
+      } finally {
+        setIsSubmitting(false)
+      }
+    },
+    (errors) => {
+      console.warn('🔍 フォーム検証エラー:', errors)
+      setIsSubmitting(false)
+    }
+  )
 
   // 郵便番号のフォーマット処理
   const formatPostalCode = (value: string) => {
@@ -198,10 +205,10 @@ export default function NewVendorPage() {
 
                   <FormField
                     control={form.control}
-                    name="shortName"
+                    name="name"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel className="bg-blue-100 px-4 py-2 block">仕入先略名</FormLabel>
+                        <FormLabel className="bg-blue-100 px-4 py-2 block">仕入先名</FormLabel>
                         <FormControl>
                           <Input {...field} />
                         </FormControl>
@@ -212,7 +219,7 @@ export default function NewVendorPage() {
 
                   <FormField
                     control={form.control}
-                    name="kanaName"
+                    name="kana_name"
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel className="bg-blue-100 px-4 py-2 block">仕入先カナ名</FormLabel>
@@ -227,7 +234,7 @@ export default function NewVendorPage() {
                   <div>
                     <FormField
                       control={form.control}
-                      name="postalCode"
+                      name="postal_code"
                       render={({ field }) => (
                         <FormItem>
                           <div className="flex justify-between items-center">

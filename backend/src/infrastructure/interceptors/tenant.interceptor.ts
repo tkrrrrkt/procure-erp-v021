@@ -1,4 +1,10 @@
-import { Injectable, NestInterceptor, ExecutionContext, CallHandler, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  NestInterceptor,
+  ExecutionContext,
+  CallHandler,
+  BadRequestException,
+} from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { Observable } from 'rxjs';
 import { PrismaService } from '../database/prisma.service';
@@ -26,7 +32,7 @@ export class TenantInterceptor implements NestInterceptor {
 
     // Get tenant ID from authenticated user or header
     let tenantId = request.user?.tenantId;
-    
+
     if (!tenantId) {
       // Try to get from header (for service-to-service calls)
       tenantId = request.headers['x-tenant-id'];
@@ -69,7 +75,11 @@ export class TenantInterceptor implements NestInterceptor {
 
       if (params.model && tenantModels.includes(params.model)) {
         // Add tenant filter to queries
-        if (params.action === 'findMany' || params.action === 'findFirst' || params.action === 'findUnique') {
+        if (
+          params.action === 'findMany' ||
+          params.action === 'findFirst' ||
+          params.action === 'findUnique'
+        ) {
           params.args = params.args || {};
           params.args.where = {
             ...params.args.where,

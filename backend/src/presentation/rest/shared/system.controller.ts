@@ -1,6 +1,10 @@
 import { Controller, Get } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
-import { Public, CurrentUser, IAuth0User } from '../../../infrastructure/external-services/auth0/auth0.decorators';
+import {
+  Public,
+  CurrentUser,
+  IAuth0User,
+} from '../../../infrastructure/external-services/auth0/auth0.decorators';
 import { ConfigService } from '@nestjs/config';
 
 /**
@@ -17,21 +21,21 @@ export class SystemController {
    */
   @Get('health')
   @Public()
-  @ApiOperation({ 
+  @ApiOperation({
     summary: 'System health check',
-    description: 'Returns system health status for load balancers and monitoring systems' 
+    description: 'Returns system health status for load balancers and monitoring systems',
   })
-  @ApiResponse({ 
-    status: 200, 
+  @ApiResponse({
+    status: 200,
     description: 'System is healthy',
     schema: {
       example: {
         status: 'ok',
         timestamp: '2025-06-22T13:00:00.000Z',
         service: 'ProcureERP API',
-        version: '1.0.0'
-      }
-    }
+        version: '1.0.0',
+      },
+    },
   })
   getHealth() {
     return {
@@ -39,7 +43,7 @@ export class SystemController {
       timestamp: new Date().toISOString(),
       service: 'ProcureERP API',
       version: process.env.npm_package_version || '1.0.0',
-      uptime: process.uptime()
+      uptime: process.uptime(),
     };
   }
 
@@ -49,12 +53,12 @@ export class SystemController {
    */
   @Get('info')
   @Public()
-  @ApiOperation({ 
+  @ApiOperation({
     summary: 'Get system information',
-    description: 'Returns basic system information for operations team' 
+    description: 'Returns basic system information for operations team',
   })
-  @ApiResponse({ 
-    status: 200, 
+  @ApiResponse({
+    status: 200,
     description: 'System information',
     schema: {
       example: {
@@ -62,9 +66,9 @@ export class SystemController {
         version: '1.0.0',
         environment: 'development',
         nodeVersion: 'v18.17.0',
-        timestamp: '2025-06-22T13:00:00.000Z'
-      }
-    }
+        timestamp: '2025-06-22T13:00:00.000Z',
+      },
+    },
   })
   getSystemInfo() {
     return {
@@ -74,7 +78,7 @@ export class SystemController {
       nodeVersion: process.version,
       timestamp: new Date().toISOString(),
       platform: process.platform,
-      architecture: process.arch
+      architecture: process.arch,
     };
   }
 
@@ -83,12 +87,12 @@ export class SystemController {
    * 認証フロー確認・デバッグ用
    */
   @Get('user/profile')
-  @ApiOperation({ 
+  @ApiOperation({
     summary: 'Get current authenticated user profile',
-    description: 'Returns current user profile information for authentication verification' 
+    description: 'Returns current user profile information for authentication verification',
   })
-  @ApiResponse({ 
-    status: 200, 
+  @ApiResponse({
+    status: 200,
     description: 'Current user profile information',
     schema: {
       example: {
@@ -96,9 +100,9 @@ export class SystemController {
         email: 'user@company.com',
         tenantId: 'tenant-456',
         permissions: ['read:purchase-requests'],
-        auth0Id: 'auth0-789'
-      }
-    }
+        auth0Id: 'auth0-789',
+      },
+    },
   })
   @ApiResponse({ status: 401, description: 'Unauthorized - Invalid or missing JWT token' })
   getCurrentUser(@CurrentUser() user: IAuth0User) {
@@ -109,7 +113,7 @@ export class SystemController {
       permissions: user.permissions,
       auth0Id: user.auth0Id,
       timestamp: new Date().toISOString(),
-      authProvider: 'Auth0'
+      authProvider: 'Auth0',
     };
   }
 }

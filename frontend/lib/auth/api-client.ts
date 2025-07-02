@@ -1,7 +1,9 @@
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosError } from 'axios'
+import { CsrfHandler } from './csrf-handler'
 
 // APIクライアントのインスタンス
 let apiClient: AxiosInstance | null = null
+let csrfHandler: CsrfHandler | null = null
 
 // アクセストークンを取得する関数の型
 type GetAccessTokenFunction = () => Promise<string | null>
@@ -40,6 +42,16 @@ export function initializeApiClient(getAccessToken: GetAccessTokenFunction): Axi
     }
   )
 
+  // CSRF保護を初期化
+  csrfHandler = new CsrfHandler(apiClient, {
+    debug: process.env.NODE_ENV === 'development'
+  })
+  
+  // CSRF保護を非同期で初期化（エラーは警告レベル）
+  csrfHandler.initialize().catch((error) => {
+    console.warn('CSRF protection initialization failed:', error)
+  })
+
   // レスポンスインターセプター：エラーハンドリング
   apiClient.interceptors.response.use(
     (response) => response,
@@ -48,7 +60,9 @@ export function initializeApiClient(getAccessToken: GetAccessTokenFunction): Axi
         // 認証エラーの場合
         console.error('Authentication error - redirecting to login')
         // ここでログアウト処理やリダイレクトを実行
-        window.location.href = '/login'
+        if (typeof window !== 'undefined') {
+          window.location.href = '/login'
+        }
       } else if (error.response?.status === 403) {
         // 権限エラーの場合
         console.error('Permission denied')
@@ -93,12 +107,36 @@ export const api = {
     getApiClient().delete<T>(url, config),
 }
 
+// CSRF保護関連の関数をエクスポート
+export const csrf = {
+  // セッションのCSRFトークンをクリア
+  clearSession: async (): Promise<void> => {
+    if (csrfHandler) {
+      await csrfHandler.clearSession()
+    }
+  },
+  
+  // CSRF保護が初期化済みかチェック
+  isInitialized: (): boolean => {
+    return csrfHandler !== null
+  }
+}
+
 // APIエンドポイント定義
 export const endpoints = {
   // 認証関連
   auth: {
     profile: '/api/v1/auth/profile',
-    refresh: '/api/v1/auth/refresh',
+    logout: '/api/v1/auth/logout',
+  },
+  
+  // CSRF保護関連
+  csrf: {
+    token: '/api/v1/csrf/token',
+    statistics: '/api/v1/csrf/statistics',
+    health: '/api/v1/csrf/health',
+    cleanup: '/api/v1/csrf/cleanup',
+    session: '/api/v1/csrf/session',
   },
   
   // 購買依頼

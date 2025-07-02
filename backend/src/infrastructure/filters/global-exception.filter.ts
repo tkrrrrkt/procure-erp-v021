@@ -25,7 +25,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     if (exception instanceof HttpException) {
       status = exception.getStatus();
       const exceptionResponse = exception.getResponse();
-      
+
       if (typeof exceptionResponse === 'string') {
         message = exceptionResponse;
       } else if (typeof exceptionResponse === 'object') {
@@ -36,7 +36,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       }
     } else if (exception instanceof Error) {
       message = exception.message;
-      
+
       // Handle specific error types
       if (exception.name === 'PrismaClientKnownRequestError') {
         const prismaError = exception as any;
@@ -70,9 +70,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
         exception instanceof Error ? exception.stack : undefined,
       );
     } else {
-      this.logger.warn(
-        `${request.method} ${request.url} - ${status} - ${message}`,
-      );
+      this.logger.warn(`${request.method} ${request.url} - ${status} - ${message}`);
     }
 
     response.status(status).json(errorResponse);
