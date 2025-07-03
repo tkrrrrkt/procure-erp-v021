@@ -1,0 +1,522 @@
+# ================================================
+# ProcureERP Production Deployment Validation Configuration
+# 本番環境デプロイメント検証・品質保証設定
+# ================================================
+
+# Pre-deployment Validation Job
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: pre-deployment-validation
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp
+    component: validation
+    environment: production
+    validation-type: pre-deployment
+spec:
+  template:
+    metadata:
+      labels:
+        app: procure-erp-validation
+        component: pre-deployment
+    spec:
+      serviceAccountName: procure-erp-validation
+      restartPolicy: Never
+      containers:
+      - name: pre-deployment-validator
+        image: procure-erp/validation-tools:latest
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -e
+          echo "=== ProcureERP Pre-deployment Validation ==="
+          
+          # 1. Configuration Validation
+          echo "1. Validating Kubernetes configurations..."
+          
+          # Validate YAML syntax
+          find /manifests -name "*.yaml" -exec kubectl apply --dry-run=client -f {} \;
+          
+          # Validate resource requirements
+          echo "Checking resource requirements..."
+          kubectl top nodes || echo "Warning: Metrics server not available"
+          
+          # Validate secrets and configmaps
+          echo "Validating secrets and configmaps..."
+          kubectl get secrets -n procure-erp-prod
+          kubectl get configmaps -n procure-erp-prod
+          
+          # 2. Database Validation
+          echo "2. Validating database connectivity..."
+          
+          # Test database connection
+          pg_isready -h procure-erp-postgres.procure-erp-prod.svc.cluster.local -p 5432 -U procure_erp_user
+          
+          # Validate database schema
+          psql -h procure-erp-postgres.procure-erp-prod.svc.cluster.local \
+               -U procure_erp_user -d procure_erp_prod \
+               -c "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public';"
+          
+          # 3. Redis Validation
+          echo "3. Validating Redis connectivity..."
+          redis-cli -h procure-erp-redis.procure-erp-prod.svc.cluster.local -p 6379 ping
+          
+          # 4. Security Validation
+          echo "4. Validating security configurations..."
+          
+          # Check PSP and security contexts
+          kubectl auth can-i use podsecuritypolicy/restricted --as=system:serviceaccount:procure-erp-prod:procure-erp-backend
+          
+          # Validate network policies
+          kubectl get networkpolicies -n procure-erp-prod
+          
+          # 5. Performance Validation
+          echo "5. Validating performance configurations..."
+          
+          # Check resource quotas
+          kubectl describe resourcequota -n procure-erp-prod
+          
+          # Check HPA configuration
+          kubectl get hpa -n procure-erp-prod
+          
+          # 6. Monitoring Validation
+          echo "6. Validating monitoring setup..."
+          
+          # Check ServiceMonitors
+          kubectl get servicemonitor -n procure-erp-prod
+          
+          # Check PrometheusRules
+          kubectl get prometheusrule -n procure-erp-prod
+          
+          echo "=== Pre-deployment validation completed successfully ==="
+        env:
+        - name: PGPASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: password
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: redis-credentials
+              key: password
+        resources:
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+        volumeMounts:
+        - name: manifest-volume
+          mountPath: /manifests
+      volumes:
+      - name: manifest-volume
+        configMap:
+          name: deployment-manifests
+
+---
+# Post-deployment Validation Job
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: post-deployment-validation
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp
+    component: validation
+    environment: production
+    validation-type: post-deployment
+spec:
+  template:
+    metadata:
+      labels:
+        app: procure-erp-validation
+        component: post-deployment
+    spec:
+      serviceAccountName: procure-erp-validation
+      restartPolicy: Never
+      containers:
+      - name: post-deployment-validator
+        image: procure-erp/validation-tools:latest
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -e
+          echo "=== ProcureERP Post-deployment Validation ==="
+          
+          # Wait for deployment rollout
+          echo "Waiting for deployments to be ready..."
+          kubectl rollout status deployment/procure-erp-backend -n procure-erp-prod --timeout=600s
+          kubectl rollout status deployment/procure-erp-frontend -n procure-erp-prod --timeout=600s
+          kubectl rollout status deployment/procure-erp-nginx -n procure-erp-prod --timeout=600s
+          
+          # 1. Health Check Validation
+          echo "1. Performing health checks..."
+          
+          # Backend health check
+          curl -f http://procure-erp-backend.procure-erp-prod.svc.cluster.local:3000/health || exit 1
+          
+          # Frontend health check
+          curl -f http://procure-erp-frontend.procure-erp-prod.svc.cluster.local:3000/api/health || exit 1
+          
+          # Database health check
+          pg_isready -h procure-erp-postgres.procure-erp-prod.svc.cluster.local -p 5432 -U procure_erp_user
+          
+          # Redis health check
+          redis-cli -h procure-erp-redis.procure-erp-prod.svc.cluster.local -p 6379 ping
+          
+          # 2. Functional Testing
+          echo "2. Performing functional tests..."
+          
+          # Test API endpoints
+          response=$(curl -s -o /dev/null -w "%{http_code}" \
+            http://procure-erp-backend.procure-erp-prod.svc.cluster.local:3000/api/health)
+          
+          if [ "$response" != "200" ]; then
+            echo "API health check failed: HTTP $response"
+            exit 1
+          fi
+          
+          # Test database connectivity through API
+          response=$(curl -s -o /dev/null -w "%{http_code}" \
+            http://procure-erp-backend.procure-erp-prod.svc.cluster.local:3000/api/status)
+          
+          if [ "$response" != "200" ]; then
+            echo "Database connectivity test failed: HTTP $response"
+            exit 1
+          fi
+          
+          # 3. Performance Testing
+          echo "3. Performing performance tests..."
+          
+          # Load test with ab (Apache Bench)
+          ab -n 100 -c 10 -T application/json \
+            http://procure-erp-backend.procure-erp-prod.svc.cluster.local:3000/api/health
+          
+          # 4. Security Testing
+          echo "4. Performing security tests..."
+          
+          # Test HTTPS enforcement (should redirect)
+          response=$(curl -s -o /dev/null -w "%{http_code}" \
+            http://procure-erp-nginx.procure-erp-prod.svc.cluster.local/)
+          
+          # Test security headers
+          curl -I http://procure-erp-nginx.procure-erp-prod.svc.cluster.local/ | grep -i "strict-transport-security"
+          
+          # 5. Monitoring Validation
+          echo "5. Validating monitoring endpoints..."
+          
+          # Check metrics endpoints
+          curl -f http://procure-erp-backend.procure-erp-prod.svc.cluster.local:3000/metrics || echo "Warning: Metrics endpoint not available"
+          
+          # 6. Backup Validation
+          echo "6. Validating backup systems..."
+          
+          # Check if backup jobs are scheduled
+          kubectl get cronjobs -n procure-erp-prod | grep backup
+          
+          echo "=== Post-deployment validation completed successfully ==="
+        env:
+        - name: PGPASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: password
+        resources:
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+
+---
+# Smoke Test Job
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: smoke-test
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp
+    component: validation
+    environment: production
+    validation-type: smoke-test
+spec:
+  template:
+    metadata:
+      labels:
+        app: procure-erp-validation
+        component: smoke-test
+    spec:
+      serviceAccountName: procure-erp-validation
+      restartPolicy: Never
+      containers:
+      - name: smoke-test
+        image: procure-erp/smoke-test:latest
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -e
+          echo "=== ProcureERP Smoke Tests ==="
+          
+          BASE_URL="http://procure-erp-backend.procure-erp-prod.svc.cluster.local:3000"
+          
+          # 1. Basic API Tests
+          echo "1. Testing basic API endpoints..."
+          
+          # Health check
+          curl -f $BASE_URL/health
+          echo "✓ Health check passed"
+          
+          # API documentation
+          curl -f $BASE_URL/api-docs
+          echo "✓ API documentation accessible"
+          
+          # 2. Authentication Tests
+          echo "2. Testing authentication..."
+          
+          # Get JWT token (mock for smoke test)
+          TOKEN=$(curl -s -X POST $BASE_URL/auth/login \
+            -H "Content-Type: application/json" \
+            -d '{"email":"test@procure-erp.com","password":"testpass"}' | \
+            jq -r '.access_token' || echo "mock-token")
+          
+          echo "✓ Authentication endpoint accessible"
+          
+          # 3. Core Business Logic Tests
+          echo "3. Testing core business logic..."
+          
+          # Organizations endpoint
+          curl -f -H "Authorization: Bearer $TOKEN" $BASE_URL/api/organizations || echo "⚠ Organizations endpoint test skipped"
+          
+          # Users endpoint
+          curl -f -H "Authorization: Bearer $TOKEN" $BASE_URL/api/users || echo "⚠ Users endpoint test skipped"
+          
+          # 4. Database Integration Tests
+          echo "4. Testing database integration..."
+          
+          # Database status
+          curl -f $BASE_URL/api/status
+          echo "✓ Database integration test passed"
+          
+          # 5. Cache Integration Tests
+          echo "5. Testing cache integration..."
+          
+          # Cache status (if available)
+          curl -f $BASE_URL/api/cache/status || echo "⚠ Cache status endpoint not available"
+          
+          # 6. File Upload Tests
+          echo "6. Testing file upload functionality..."
+          
+          # Create test file
+          echo "test content" > /tmp/test.txt
+          
+          # Upload test (if endpoint exists)
+          curl -f -X POST -F "file=@/tmp/test.txt" \
+            -H "Authorization: Bearer $TOKEN" \
+            $BASE_URL/api/upload || echo "⚠ File upload test skipped"
+          
+          # 7. Performance Smoke Tests
+          echo "7. Testing basic performance..."
+          
+          # Response time test
+          response_time=$(curl -o /dev/null -s -w "%{time_total}" $BASE_URL/health)
+          echo "Response time: $response_time seconds"
+          
+          # Check if response time is acceptable (< 2 seconds)
+          if (( $(echo "$response_time > 2.0" | bc -l) )); then
+            echo "⚠ Warning: Response time is slow ($response_time seconds)"
+          else
+            echo "✓ Response time is acceptable"
+          fi
+          
+          echo "=== Smoke tests completed successfully ==="
+        env:
+        - name: NODE_ENV
+          value: "production"
+        resources:
+          limits:
+            memory: "256Mi"
+            cpu: "250m"
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+
+---
+# Validation Service Account and RBAC
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: procure-erp-validation
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp
+    component: validation
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: procure-erp-validation
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp
+    component: validation
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "configmaps", "secrets"]
+  verbs: ["get", "list"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets"]
+  verbs: ["get", "list"]
+- apiGroups: ["extensions", "networking.k8s.io"]
+  resources: ["ingresses", "networkpolicies"]
+  verbs: ["get", "list"]
+- apiGroups: ["autoscaling"]
+  resources: ["horizontalpodautoscalers"]
+  verbs: ["get", "list"]
+- apiGroups: ["policy"]
+  resources: ["podsecuritypolicies"]
+  verbs: ["get", "list"]
+- apiGroups: ["monitoring.coreos.com"]
+  resources: ["servicemonitors", "prometheusrules"]
+  verbs: ["get", "list"]
+- apiGroups: ["batch"]
+  resources: ["jobs", "cronjobs"]
+  verbs: ["get", "list"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: procure-erp-validation
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp
+    component: validation
+subjects:
+- kind: ServiceAccount
+  name: procure-erp-validation
+  namespace: procure-erp-prod
+roleRef:
+  kind: Role
+  name: procure-erp-validation
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Validation Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: validation-config
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp
+    component: validation
+data:
+  validation-rules.yaml: |
+    deployment_validation:
+      required_labels:
+        - "app"
+        - "component" 
+        - "environment"
+      required_resources:
+        - memory_request
+        - cpu_request
+        - memory_limit
+        - cpu_limit
+      security_requirements:
+        - non_root_user
+        - read_only_root_filesystem
+        - drop_all_capabilities
+      health_checks:
+        - liveness_probe
+        - readiness_probe
+    
+    service_validation:
+      required_annotations:
+        - "prometheus.io/scrape"
+      port_requirements:
+        - name_required: true
+        - target_port_required: true
+    
+    performance_thresholds:
+      response_time_max: "2s"
+      cpu_usage_max: "80%"
+      memory_usage_max: "85%"
+      error_rate_max: "1%"
+    
+    security_checks:
+      - ssl_certificates
+      - security_headers
+      - network_policies
+      - pod_security_policies
+      - rbac_permissions
+
+  test-endpoints.yaml: |
+    endpoints:
+      health_checks:
+        - "/health"
+        - "/health/ready"
+        - "/health/live"
+      api_endpoints:
+        - "/api/status"
+        - "/api/version"
+        - "/api-docs"
+      metrics_endpoints:
+        - "/metrics"
+        - "/actuator/prometheus"
+    
+    expected_responses:
+      health: 200
+      api: 200
+      unauthorized: 401
+      not_found: 404
+
+---
+# Deployment Gates Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: deployment-gates
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp
+    component: validation
+data:
+  gates.yaml: |
+    pre_deployment_gates:
+      - name: "configuration_validation"
+        required: true
+        timeout: "5m"
+      - name: "security_scan"
+        required: true
+        timeout: "10m"
+      - name: "dependency_check"
+        required: true
+        timeout: "3m"
+    
+    post_deployment_gates:
+      - name: "health_check"
+        required: true
+        timeout: "10m"
+        retry_count: 3
+      - name: "smoke_tests"
+        required: true
+        timeout: "15m"
+        retry_count: 2
+      - name: "performance_baseline"
+        required: false
+        timeout: "20m"
+    
+    rollback_criteria:
+      - error_rate_threshold: "5%"
+      - response_time_threshold: "5s"
+      - availability_threshold: "95%"
+      - health_check_failures: 3

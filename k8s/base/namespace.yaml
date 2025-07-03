@@ -1,0 +1,16 @@
+# ================================================
+# ProcureERP Kubernetes Namespace
+# 企業級Kubernetesデプロイメント基盤
+# ================================================
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: procure-erp
+  labels:
+    app: procure-erp
+    environment: production
+    version: v1.0.0
+  annotations:
+    description: "ProcureERP Enterprise SaaS Application Namespace"
+    maintainer: "ProcureERP Team"

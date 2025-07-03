@@ -10,7 +10,10 @@ services:
   # Nginx - リバースプロキシ・SSL終端
   # ================================================
   nginx:
-    image: nginx:1.25-alpine
+    build:
+      context: .
+      dockerfile: docker/nginx/Dockerfile
+    image: procure-erp/nginx:latest
     container_name: procure-erp-nginx
     restart: unless-stopped
     ports:
@@ -53,13 +56,18 @@ services:
   # ================================================
   frontend:
     build:
-      context: ./frontend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: docker/frontend/Dockerfile
       target: production
       args:
         - NODE_ENV=production
+        - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+        - NEXT_PUBLIC_AUTH0_DOMAIN=${NEXT_PUBLIC_AUTH0_DOMAIN}
+        - NEXT_PUBLIC_AUTH0_CLIENT_ID=${NEXT_PUBLIC_AUTH0_CLIENT_ID}
+        - NEXT_PUBLIC_AUTH0_AUDIENCE=${NEXT_PUBLIC_AUTH0_AUDIENCE}
         - BUILD_DATE=${BUILD_DATE:-$(date -u +'%Y-%m-%dT%H:%M:%SZ')}
         - VCS_REF=${VCS_REF:-$(git rev-parse --short HEAD)}
+    image: procure-erp/frontend:latest
     container_name: procure-erp-frontend
     restart: unless-stopped
     expose:
@@ -103,13 +111,14 @@ services:
   # ================================================
   backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: docker/backend/Dockerfile
       target: production
       args:
         - NODE_ENV=production
         - BUILD_DATE=${BUILD_DATE:-$(date -u +'%Y-%m-%dT%H:%M:%SZ')}
         - VCS_REF=${VCS_REF:-$(git rev-parse --short HEAD)}
+    image: procure-erp/backend:latest
     container_name: procure-erp-backend
     restart: unless-stopped
     expose:

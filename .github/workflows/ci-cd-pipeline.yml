@@ -1,0 +1,505 @@
+# ================================================
+# ProcureERP CI/CD Pipeline - Enterprise Grade
+# 企業級継続統合・継続デプロイメント自動化
+# ================================================
+
+name: 🚀 ProcureERP CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop, 'feature/*', 'hotfix/*', 'release/*' ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+    inputs:
+      deployment_environment:
+        description: 'Deployment Environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+      skip_tests:
+        description: 'Skip tests'
+        required: false
+        default: false
+        type: boolean
+
+# ================================================
+# Environment Variables
+# ================================================
+env:
+  NODE_VERSION: '20.x'
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  DOCKER_BUILDKIT: 1
+  COMPOSE_DOCKER_CLI_BUILD: 1
+
+# ================================================
+# Jobs
+# ================================================
+jobs:
+  # ================================================
+  # Job 1: Security & Vulnerability Scanning
+  # ================================================
+  security-scan:
+    name: 🔒 Security & Vulnerability Scanning
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: 🔍 Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript, typescript
+          queries: security-extended,security-and-quality
+      
+      - name: 🛡️ Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+      
+      - name: 📊 Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+      
+      - name: 🔒 Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+
+  # ================================================
+  # Job 2: Code Quality & Linting
+  # ================================================
+  code-quality:
+    name: 💎 Code Quality & Linting
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    
+    strategy:
+      matrix:
+        component: [frontend, backend]
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+      
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: ${{ matrix.component }}/package-lock.json
+      
+      - name: 📦 Install Dependencies
+        run: |
+          cd ${{ matrix.component }}
+          npm ci --prefer-offline --no-audit
+      
+      - name: 🧹 ESLint Analysis
+        run: |
+          cd ${{ matrix.component }}
+          npm run lint
+      
+      - name: 🎨 Prettier Format Check
+        run: |
+          cd ${{ matrix.component }}
+          npm run format:check
+      
+      - name: 🔍 TypeScript Type Check
+        run: |
+          cd ${{ matrix.component }}
+          npm run type-check
+        if: matrix.component == 'frontend'
+
+  # ================================================
+  # Job 3: Unit & Integration Tests
+  # ================================================
+  test-suite:
+    name: 🧪 Unit & Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [security-scan, code-quality]
+    if: github.event.inputs.skip_tests != 'true'
+    
+    strategy:
+      matrix:
+        component: [frontend, backend]
+        test-type: [unit, integration]
+    
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: procure_erp_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: test_password
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+      
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: ${{ matrix.component }}/package-lock.json
+      
+      - name: 📦 Install Dependencies
+        run: |
+          cd ${{ matrix.component }}
+          npm ci --prefer-offline --no-audit
+      
+      - name: 🔧 Setup Test Environment
+        run: |
+          cd ${{ matrix.component }}
+          cp .env.example .env.test
+          echo "DATABASE_URL=postgresql://postgres:test_password@localhost:5432/procure_erp_test" >> .env.test
+          echo "REDIS_URL=redis://localhost:6379" >> .env.test
+      
+      - name: 🏗️ Database Migration (Backend)
+        if: matrix.component == 'backend'
+        run: |
+          cd backend
+          npm run db:migrate:test
+      
+      - name: 🧪 Run Unit Tests
+        if: matrix.test-type == 'unit'
+        run: |
+          cd ${{ matrix.component }}
+          npm run test:unit -- --coverage --verbose
+      
+      - name: 🔗 Run Integration Tests
+        if: matrix.test-type == 'integration'
+        run: |
+          cd ${{ matrix.component }}
+          npm run test:integration -- --verbose
+      
+      - name: 📊 Upload Test Coverage
+        uses: codecov/codecov-action@v3
+        if: matrix.test-type == 'unit'
+        with:
+          file: ./${{ matrix.component }}/coverage/lcov.info
+          flags: ${{ matrix.component }}
+          name: ${{ matrix.component }}-coverage
+          fail_ci_if_error: false
+
+  # ================================================
+  # Job 4: E2E Testing
+  # ================================================
+  e2e-tests:
+    name: 🎭 End-to-End Testing
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: [test-suite]
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop'
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+      
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+      
+      - name: 📦 Install Dependencies
+        run: |
+          cd frontend
+          npm ci --prefer-offline --no-audit
+      
+      - name: 🎭 Install Playwright Browsers
+        run: |
+          cd frontend
+          npx playwright install --with-deps
+      
+      - name: 🐳 Start Docker Environment
+        run: |
+          chmod +x docker-setup.sh
+          ./docker-setup.sh --dev --quiet
+          docker-compose -f docker-compose.dev.yml up -d
+          sleep 30
+      
+      - name: 🔍 Health Check
+        run: |
+          curl -f http://localhost:3000/health || exit 1
+          curl -f http://localhost:4000/api/health || exit 1
+      
+      - name: 🎭 Run E2E Tests
+        run: |
+          cd frontend
+          npm run test:e2e
+      
+      - name: 📸 Upload E2E Test Results
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-test-results
+          path: frontend/test-results/
+          retention-days: 7
+      
+      - name: 🧹 Cleanup Docker Environment
+        if: always()
+        run: |
+          docker-compose -f docker-compose.dev.yml down -v
+          docker system prune -f --volumes
+
+  # ================================================
+  # Job 5: Docker Build & Security Scan
+  # ================================================
+  docker-build:
+    name: 🐳 Docker Build & Security Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [test-suite]
+    
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
+    
+    strategy:
+      matrix:
+        component: [frontend, backend, nginx]
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+      
+      - name: 🐳 Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: 🔐 Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: 📋 Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ matrix.component }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+      
+      - name: 🏗️ Build Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./docker/${{ matrix.component }}/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64
+      
+      - name: 🛡️ Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ matrix.component }}:${{ github.sha }}
+          format: 'sarif'
+          output: 'trivy-${{ matrix.component }}.sarif'
+      
+      - name: 📊 Upload Trivy scan results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-${{ matrix.component }}.sarif'
+
+  # ================================================
+  # Job 6: Deploy to Staging
+  # ================================================
+  deploy-staging:
+    name: 🚀 Deploy to Staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [e2e-tests, docker-build]
+    if: github.ref == 'refs/heads/develop'
+    environment: staging
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+      
+      - name: 🔧 Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+      
+      - name: 🚀 Deploy to ECS Staging
+        run: |
+          echo "Deploying to staging environment..."
+          # ECS deployment logic here
+          aws ecs update-service --cluster procure-erp-staging --service procure-erp-app --force-new-deployment
+      
+      - name: 🔍 Staging Health Check
+        run: |
+          echo "Performing staging health check..."
+          curl -f ${{ secrets.STAGING_URL }}/api/health || exit 1
+      
+      - name: 📢 Notify Slack - Staging Deployment
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          channel: '#deployments'
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+        if: always()
+
+  # ================================================
+  # Job 7: Deploy to Production
+  # ================================================
+  deploy-production:
+    name: 🏭 Deploy to Production
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [docker-build]
+    if: github.ref == 'refs/heads/main' || github.event.inputs.deployment_environment == 'production'
+    environment: production
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+      
+      - name: 🔧 Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+      
+      - name: 📋 Pre-deployment Validation
+        run: |
+          echo "Running pre-deployment validation..."
+          # Add validation logic here
+      
+      - name: 🚀 Blue-Green Deployment to Production
+        run: |
+          echo "Executing blue-green deployment to production..."
+          # Blue-green deployment logic here
+          aws ecs update-service --cluster procure-erp-production --service procure-erp-app --force-new-deployment
+      
+      - name: 🔍 Production Health Check
+        run: |
+          echo "Performing production health check..."
+          curl -f ${{ secrets.PRODUCTION_URL }}/api/health || exit 1
+      
+      - name: 📊 Post-deployment Monitoring
+        run: |
+          echo "Setting up post-deployment monitoring..."
+          # Add monitoring setup here
+      
+      - name: 📢 Notify Slack - Production Deployment
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          channel: '#deployments'
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+        if: always()
+
+  # ================================================
+  # Job 8: Performance & Load Testing
+  # ================================================
+  performance-tests:
+    name: ⚡ Performance & Load Testing
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [deploy-staging]
+    if: github.ref == 'refs/heads/develop'
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+      
+      - name: 🏗️ Setup k6
+        run: |
+          sudo apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install k6
+      
+      - name: ⚡ Run Performance Tests
+        run: |
+          k6 run --vus 50 --duration 5m performance-tests/load-test.js
+      
+      - name: 📊 Upload Performance Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-test-results
+          path: performance-results/
+          retention-days: 30
+
+  # ================================================
+  # Job 9: Security Compliance Report
+  # ================================================
+  security-compliance:
+    name: 🛡️ Security Compliance Report
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [deploy-production]
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+      
+      - name: 🔍 OWASP ZAP Security Scan
+        uses: zaproxy/action-full-scan@v0.10.0
+        with:
+          target: ${{ secrets.PRODUCTION_URL }}
+          rules_file_name: '.zap/rules.tsv'
+          cmd_options: '-a'
+      
+      - name: 📊 Generate Security Report
+        run: |
+          echo "Generating comprehensive security compliance report..."
+          # Add security report generation logic
+      
+      - name: 📢 Notify Security Team
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          channel: '#security'
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+        if: always()

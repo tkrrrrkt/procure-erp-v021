@@ -1,0 +1,173 @@
+# ================================================
+# ProcureERP Kubernetes Ingress
+# 企業級SSL終端・ルーティング設定
+# ================================================
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: procure-erp-ingress
+  namespace: procure-erp
+  labels:
+    app: procure-erp
+    component: ingress
+  annotations:
+    # NGINX Ingress Controller
+    kubernetes.io/ingress.class: "nginx"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "20m"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    nginx.ingress.kubernetes.io/client-body-buffer-size: "1m"
+    
+    # Rate Limiting
+    nginx.ingress.kubernetes.io/rate-limit: "100"
+    nginx.ingress.kubernetes.io/rate-limit-window: "1m"
+    
+    # Security Headers
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      add_header X-Frame-Options "SAMEORIGIN" always;
+      add_header X-Content-Type-Options "nosniff" always;
+      add_header X-XSS-Protection "1; mode=block" always;
+      add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+      add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+      add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:;" always;
+    
+    # Cert-Manager for Let's Encrypt
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    cert-manager.io/acme-challenge-type: "http01"
+    
+    # External DNS
+    external-dns.alpha.kubernetes.io/hostname: "procure-erp.com,www.procure-erp.com,api.procure-erp.com"
+    external-dns.alpha.kubernetes.io/ttl: "300"
+    
+    # AWS Load Balancer Controller (if using ALB)
+    alb.ingress.kubernetes.io/scheme: "internet-facing"
+    alb.ingress.kubernetes.io/target-type: "ip"
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    alb.ingress.kubernetes.io/healthcheck-path: "/health"
+    alb.ingress.kubernetes.io/healthcheck-interval-seconds: "15"
+    alb.ingress.kubernetes.io/healthcheck-timeout-seconds: "5"
+    alb.ingress.kubernetes.io/healthy-threshold-count: "2"
+    alb.ingress.kubernetes.io/unhealthy-threshold-count: "5"
+
+spec:
+  tls:
+  - hosts:
+    - procure-erp.com
+    - www.procure-erp.com
+    - api.procure-erp.com
+    secretName: procure-erp-tls
+  
+  rules:
+  # Main Domain
+  - host: procure-erp.com
+    http:
+      paths:
+      # API Routes
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: procure-erp-backend
+            port:
+              number: 3001
+      # Frontend Routes
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: procure-erp-frontend
+            port:
+              number: 3000
+  
+  # WWW Subdomain
+  - host: www.procure-erp.com
+    http:
+      paths:
+      # API Routes
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: procure-erp-backend
+            port:
+              number: 3001
+      # Frontend Routes
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: procure-erp-frontend
+            port:
+              number: 3000
+  
+  # API Subdomain
+  - host: api.procure-erp.com
+    http:
+      paths:
+      # API Routes Only
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: procure-erp-backend
+            port:
+              number: 3001
+
+---
+# Alternative Ingress for Development/Staging
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: procure-erp-staging-ingress
+  namespace: procure-erp
+  labels:
+    app: procure-erp
+    component: ingress
+    environment: staging
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    cert-manager.io/cluster-issuer: "letsencrypt-staging"
+spec:
+  tls:
+  - hosts:
+    - staging.procure-erp.com
+    - staging-api.procure-erp.com
+    secretName: procure-erp-staging-tls
+  
+  rules:
+  # Staging Domain
+  - host: staging.procure-erp.com
+    http:
+      paths:
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: procure-erp-backend
+            port:
+              number: 3001
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: procure-erp-frontend
+            port:
+              number: 3000
+  
+  # Staging API Domain
+  - host: staging-api.procure-erp.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: procure-erp-backend
+            port:
+              number: 3001

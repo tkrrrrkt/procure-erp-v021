@@ -1,0 +1,191 @@
+# ================================================
+# ProcureERP RBAC Configuration
+# 企業級権限管理・セキュリティ設定
+# ================================================
+
+# Service Account for Backend
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: procure-erp-backend
+  namespace: procure-erp
+  labels:
+    app: procure-erp
+    component: backend
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/ProcureERP-Backend-Role
+
+---
+# Service Account for Frontend
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: procure-erp-frontend
+  namespace: procure-erp
+  labels:
+    app: procure-erp
+    component: frontend
+
+---
+# Service Account for Nginx
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: procure-erp-nginx
+  namespace: procure-erp
+  labels:
+    app: procure-erp
+    component: nginx
+
+---
+# Cluster Role for Backend
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: procure-erp-backend-role
+  labels:
+    app: procure-erp
+    component: backend
+rules:
+# Health Check Access
+- apiGroups: [""]
+  resources: ["pods", "services", "endpoints"]
+  verbs: ["get", "list", "watch"]
+
+# ConfigMap Read Access
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list", "watch"]
+
+# Secret Read Access (限定的)
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get"]
+  resourceNames: ["procure-erp-secrets"]
+
+# Metrics Access
+- apiGroups: ["metrics.k8s.io"]
+  resources: ["pods", "nodes"]
+  verbs: ["get", "list"]
+
+---
+# Role for Application Namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: procure-erp-app-role
+  namespace: procure-erp
+  labels:
+    app: procure-erp
+rules:
+# Pod Management
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+# Service Management
+- apiGroups: [""]
+  resources: ["services"]
+  verbs: ["get", "list", "watch", "create", "update", "patch"]
+
+# ConfigMap Management
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list", "watch", "create", "update", "patch"]
+
+# Secret Management (限定的)
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "list", "watch"]
+
+# Events Read
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["get", "list", "watch"]
+
+# PVC Access
+- apiGroups: [""]
+  resources: ["persistentvolumeclaims"]
+  verbs: ["get", "list", "watch"]
+
+---
+# Cluster Role Binding for Backend
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: procure-erp-backend-binding
+  labels:
+    app: procure-erp
+    component: backend
+subjects:
+- kind: ServiceAccount
+  name: procure-erp-backend
+  namespace: procure-erp
+roleRef:
+  kind: ClusterRole
+  name: procure-erp-backend-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Role Binding for Application
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: procure-erp-app-binding
+  namespace: procure-erp
+  labels:
+    app: procure-erp
+subjects:
+- kind: ServiceAccount
+  name: procure-erp-backend
+  namespace: procure-erp
+- kind: ServiceAccount
+  name: procure-erp-frontend
+  namespace: procure-erp
+- kind: ServiceAccount
+  name: procure-erp-nginx
+  namespace: procure-erp
+roleRef:
+  kind: Role
+  name: procure-erp-app-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Security Context Constraints (OpenShift)
+apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: procure-erp-scc
+  labels:
+    app: procure-erp
+allowHostDirVolumePlugin: false
+allowHostIPC: false
+allowHostNetwork: false
+allowHostPID: false
+allowHostPorts: false
+allowPrivilegeEscalation: false
+allowPrivilegedContainer: false
+allowedCapabilities: []
+defaultAddCapabilities: []
+fsGroup:
+  type: MustRunAs
+  ranges:
+  - min: 1001
+    max: 1001
+readOnlyRootFilesystem: true
+requiredDropCapabilities:
+- ALL
+runAsUser:
+  type: MustRunAsNonRoot
+seLinuxContext:
+  type: MustRunAs
+users:
+- system:serviceaccount:procure-erp:procure-erp-backend
+- system:serviceaccount:procure-erp:procure-erp-frontend
+- system:serviceaccount:procure-erp:procure-erp-nginx
+volumes:
+- configMap
+- emptyDir
+- persistentVolumeClaim
+- projected
+- secret

@@ -1,0 +1,95 @@
+# ================================================
+# ProcureERP Kustomization Base
+# 企業級Kubernetesベース設定
+# ================================================
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: procure-erp-base
+  annotations:
+    description: "ProcureERP Base Kubernetes Configuration"
+
+# Resources to include
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - secret.yaml
+  - deployment.yaml
+  - service.yaml
+  - ingress.yaml
+  - hpa.yaml
+  - pdb.yaml
+  - pvc.yaml
+  - rbac.yaml
+  - network-policy.yaml
+
+# Common labels applied to all resources
+commonLabels:
+  app: procure-erp
+  managed-by: kustomize
+  
+# Common annotations applied to all resources
+commonAnnotations:
+  version: v1.0.0
+  maintainer: ProcureERP Team
+  docs: https://docs.procure-erp.com
+
+# Name prefix for all resources
+namePrefix: ""
+
+# Name suffix for all resources
+nameSuffix: ""
+
+# Namespace for all resources
+namespace: procure-erp
+
+# Images to be used
+images:
+  - name: procure-erp/backend
+    newTag: latest
+  - name: procure-erp/frontend
+    newTag: latest
+  - name: procure-erp/nginx
+    newTag: latest
+
+# ConfigMap and Secret generators
+configMapGenerator:
+  - name: procure-erp-env-config
+    literals:
+      - DEPLOYMENT_TIMESTAMP=$(date -u +%Y%m%d%H%M%S)
+      - KUSTOMIZE_VERSION=v4.5.7
+
+secretGenerator:
+  - name: procure-erp-generated-secrets
+    literals:
+      - DEPLOYMENT_ID=$(openssl rand -hex 16)
+    type: Opaque
+
+# Patches to apply
+patchesStrategicMerge: []
+
+# JSON patches
+patchesJson6902: []
+
+# Replica count patches
+replicas:
+  - name: procure-erp-backend
+    count: 3
+  - name: procure-erp-frontend
+    count: 2
+  - name: procure-erp-nginx
+    count: 2
+
+# Generators
+generators: []
+
+# Transformers
+transformers: []
+
+# Configurations
+configurations: []
+
+# CRDs
+crds: []

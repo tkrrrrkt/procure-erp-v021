@@ -1,0 +1,355 @@
+# ================================================
+# ProcureERP Production Resource Quotas & Limits
+# 本番環境リソース制限・クォータ設定
+# ================================================
+
+# Namespace Resource Quota
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: procure-erp-prod-quota
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp
+    environment: production
+    component: resource-management
+spec:
+  hard:
+    # CPU Limits
+    requests.cpu: "10"      # 10 CPU cores total
+    limits.cpu: "20"        # 20 CPU cores burst
+    
+    # Memory Limits
+    requests.memory: "20Gi" # 20GB memory guaranteed
+    limits.memory: "40Gi"   # 40GB memory burst
+    
+    # Storage Limits
+    requests.storage: "500Gi"         # 500GB storage
+    persistentvolumeclaims: "20"      # Max 20 PVCs
+    
+    # Pod Limits
+    pods: "100"                       # Max 100 pods
+    replicationcontrollers: "20"      # Max 20 RCs
+    
+    # Service Limits
+    services: "20"                    # Max 20 services
+    services.loadbalancers: "5"       # Max 5 LoadBalancers
+    services.nodeports: "10"          # Max 10 NodePorts
+    
+    # Secret/ConfigMap Limits
+    secrets: "50"                     # Max 50 secrets
+    configmaps: "50"                  # Max 50 configmaps
+    
+    # Object Limits
+    count/deployments.apps: "20"      # Max 20 deployments
+    count/replicasets.apps: "50"      # Max 50 replicasets
+    count/statefulsets.apps: "10"     # Max 10 statefulsets
+    count/jobs.batch: "20"            # Max 20 jobs
+    count/cronjobs.batch: "10"        # Max 10 cronjobs
+    count/ingresses.networking.k8s.io: "10"  # Max 10 ingresses
+
+---
+# Limit Range for Production Namespace
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: procure-erp-prod-limits
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp
+    environment: production
+    component: resource-management
+spec:
+  limits:
+  # Container Limits
+  - type: Container
+    default:
+      cpu: "500m"       # Default CPU limit
+      memory: "512Mi"   # Default memory limit
+      ephemeral-storage: "1Gi"
+    defaultRequest:
+      cpu: "100m"       # Default CPU request
+      memory: "128Mi"   # Default memory request
+      ephemeral-storage: "512Mi"
+    max:
+      cpu: "4"          # Max CPU per container
+      memory: "8Gi"     # Max memory per container
+      ephemeral-storage: "10Gi"
+    min:
+      cpu: "50m"        # Min CPU per container
+      memory: "64Mi"    # Min memory per container
+      ephemeral-storage: "100Mi"
+    maxLimitRequestRatio:
+      cpu: "10"         # CPU burst ratio
+      memory: "4"       # Memory burst ratio
+  
+  # Pod Limits
+  - type: Pod
+    max:
+      cpu: "8"          # Max CPU per pod
+      memory: "16Gi"    # Max memory per pod
+      ephemeral-storage: "20Gi"
+    min:
+      cpu: "100m"       # Min CPU per pod
+      memory: "128Mi"   # Min memory per pod
+      ephemeral-storage: "200Mi"
+  
+  # PVC Limits
+  - type: PersistentVolumeClaim
+    max:
+      storage: "100Gi"  # Max storage per PVC
+    min:
+      storage: "1Gi"    # Min storage per PVC
+
+---
+# Backend Service Resource Quota
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: procure-erp-backend-quota
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp-backend
+    environment: production
+    component: backend
+spec:
+  hard:
+    requests.cpu: "4"      # 4 CPU cores for backend
+    limits.cpu: "8"        # 8 CPU cores burst
+    requests.memory: "8Gi" # 8GB memory for backend
+    limits.memory: "16Gi"  # 16GB memory burst
+    pods: "20"             # Max 20 backend pods
+  scopes:
+  - NotTerminating
+  scopeSelector:
+    matchExpressions:
+    - operator: In
+      scopeName: PriorityClass
+      values: ["high-priority"]
+
+---
+# Database Resource Quota
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: procure-erp-database-quota
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp-postgres
+    environment: production
+    component: database
+spec:
+  hard:
+    requests.cpu: "2"       # 2 CPU cores for database
+    limits.cpu: "4"         # 4 CPU cores burst
+    requests.memory: "4Gi"  # 4GB memory for database
+    limits.memory: "8Gi"    # 8GB memory burst
+    requests.storage: "200Gi" # 200GB storage for database
+    pods: "5"               # Max 5 database pods
+  scopes:
+  - NotTerminating
+  scopeSelector:
+    matchExpressions:
+    - operator: In
+      scopeName: PriorityClass
+      values: ["high-priority", "system-cluster-critical"]
+
+---
+# Priority Classes
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: procure-erp-critical
+  labels:
+    app: procure-erp
+    environment: production
+value: 1000000
+globalDefault: false
+description: "Critical priority for ProcureERP core services"
+
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: procure-erp-high
+  labels:
+    app: procure-erp
+    environment: production
+value: 100000
+globalDefault: false
+description: "High priority for ProcureERP important services"
+
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: procure-erp-normal
+  labels:
+    app: procure-erp
+    environment: production
+value: 0
+globalDefault: true
+description: "Normal priority for ProcureERP services"
+
+---
+# Pod Disruption Budget for Backend
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: procure-erp-backend-pdb
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp-backend
+    environment: production
+spec:
+  maxUnavailable: 25%  # Allow 25% of pods to be unavailable
+  selector:
+    matchLabels:
+      app: procure-erp-backend
+      environment: production
+
+---
+# Pod Disruption Budget for Frontend
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: procure-erp-frontend-pdb
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp-frontend
+    environment: production
+spec:
+  maxUnavailable: 25%  # Allow 25% of pods to be unavailable
+  selector:
+    matchLabels:
+      app: procure-erp-frontend
+      environment: production
+
+---
+# Pod Disruption Budget for Nginx
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: procure-erp-nginx-pdb
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp-nginx
+    environment: production
+spec:
+  maxUnavailable: 1    # Keep at least 2 nginx pods running
+  selector:
+    matchLabels:
+      app: procure-erp-nginx
+      environment: production
+
+---
+# Pod Disruption Budget for Database
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: procure-erp-postgres-pdb
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp-postgres
+    environment: production
+spec:
+  maxUnavailable: 0    # No database pods can be unavailable
+  selector:
+    matchLabels:
+      app: procure-erp-postgres
+      environment: production
+
+---
+# Pod Disruption Budget for Redis
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: procure-erp-redis-pdb
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp-redis
+    environment: production
+spec:
+  maxUnavailable: 1    # Allow 1 redis pod to be unavailable (for cluster mode)
+  selector:
+    matchLabels:
+      app: procure-erp-redis
+      environment: production
+
+---
+# Vertical Pod Autoscaler for Backend
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: procure-erp-backend-vpa
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp-backend
+    environment: production
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: procure-erp-backend
+  updatePolicy:
+    updateMode: "Auto"  # Automatically apply recommendations
+  resourcePolicy:
+    containerPolicies:
+    - containerName: backend
+      maxAllowed:
+        cpu: "4"
+        memory: "8Gi"
+      minAllowed:
+        cpu: "100m"
+        memory: "256Mi"
+      controlledResources: ["cpu", "memory"]
+
+---
+# Vertical Pod Autoscaler for Database
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: procure-erp-postgres-vpa
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp-postgres
+    environment: production
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: StatefulSet
+    name: procure-erp-postgres
+  updatePolicy:
+    updateMode: "Initial"  # Only apply at pod creation
+  resourcePolicy:
+    containerPolicies:
+    - containerName: postgres
+      maxAllowed:
+        cpu: "4"
+        memory: "8Gi"
+      minAllowed:
+        cpu: "500m"
+        memory: "1Gi"
+      controlledResources: ["cpu", "memory"]
+
+---
+# Network Bandwidth Limits (Cilium/Calico)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: procure-erp-network-limits
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp
+    environment: production
+    component: network
+data:
+  # Network bandwidth limits in Mbps
+  backend-ingress-limit: "1000"    # 1 Gbps ingress
+  backend-egress-limit: "500"      # 500 Mbps egress
+  frontend-ingress-limit: "500"    # 500 Mbps ingress
+  frontend-egress-limit: "200"     # 200 Mbps egress
+  database-ingress-limit: "200"    # 200 Mbps ingress
+  database-egress-limit: "200"     # 200 Mbps egress
+  redis-ingress-limit: "100"       # 100 Mbps ingress
+  redis-egress-limit: "100"        # 100 Mbps egress

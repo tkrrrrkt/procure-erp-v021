@@ -1,0 +1,147 @@
+# ================================================
+# ProcureERP Staging Environment Overlay
+# ステージング環境固有の設定
+# ================================================
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Base configuration
+bases:
+- ../../base
+
+# Namespace suffix for staging
+nameSuffix: -staging
+
+# Common labels for staging
+commonLabels:
+  environment: staging
+  version: v1.0.0-staging
+
+# Common annotations for staging
+commonAnnotations:
+  deployment.kubernetes.io/revision: "staging"
+  managed-by: "kustomize"
+  environment: "staging"
+
+# Images for staging (with staging tags)
+images:
+- name: procure-erp-backend
+  newTag: staging
+- name: procure-erp-frontend
+  newTag: staging
+- name: procure-erp-nginx
+  newTag: staging
+
+# ConfigMap generator for staging-specific config
+configMapGenerator:
+- name: procure-erp-config
+  behavior: merge
+  literals:
+  - NODE_ENV=staging
+  - LOG_LEVEL=debug
+  - CORS_ORIGIN=https://staging.procure-erp.com,https://staging-api.procure-erp.com
+  - AUTH0_AUDIENCE=https://staging-api.procure-erp.com
+  - AUTH0_ISSUER_URL=https://dev-22lwwfj3g02rol8a.jp.auth0.com/
+  - DATABASE_URL=postgresql://procure_erp_user:${DATABASE_PASSWORD}@postgres-staging.procure-erp.svc.cluster.local:5432/procure_erp_staging
+  - REDIS_URL=redis://redis-staging.procure-erp.svc.cluster.local:6379
+  - NEXT_PUBLIC_API_URL=https://staging-api.procure-erp.com
+  - NEXT_PUBLIC_AUTH0_DOMAIN=dev-22lwwfj3g02rol8a.jp.auth0.com
+  - NEXT_PUBLIC_AUTH0_CLIENT_ID=${AUTH0_CLIENT_ID_STAGING}
+  - NEXT_PUBLIC_AUTH0_AUDIENCE=https://staging-api.procure-erp.com
+  - CSRF_SECRET_SALT=staging-csrf-salt-${CSRF_SECRET}
+  - JWT_SECRET_STAGING=${JWT_SECRET_STAGING}
+  - SESSION_SECRET_STAGING=${SESSION_SECRET_STAGING}
+
+# Secret generator for staging-specific secrets
+secretGenerator:
+- name: procure-erp-secrets
+  behavior: merge
+  literals:
+  - DATABASE_PASSWORD=${DATABASE_PASSWORD_STAGING}
+  - REDIS_PASSWORD=${REDIS_PASSWORD_STAGING}
+  - JWT_SECRET=${JWT_SECRET_STAGING}
+  - SESSION_SECRET=${SESSION_SECRET_STAGING}
+  - AUTH0_CLIENT_SECRET=${AUTH0_CLIENT_SECRET_STAGING}
+  - CSRF_SECRET=${CSRF_SECRET_STAGING}
+  - SMTP_PASSWORD=${SMTP_PASSWORD_STAGING}
+  - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY_STAGING}
+
+# Resource patches for staging environment
+patchesStrategicMerge:
+- deployment-patch.yaml
+- ingress-patch.yaml
+- hpa-patch.yaml
+
+# JSON patches for specific modifications
+patchesJson6902:
+- target:
+    group: apps
+    version: v1
+    kind: Deployment
+    name: procure-erp-backend
+  patch: |-
+    - op: replace
+      path: /spec/replicas
+      value: 2
+    - op: replace
+      path: /spec/template/spec/containers/0/resources/requests/memory
+      value: "256Mi"
+    - op: replace
+      path: /spec/template/spec/containers/0/resources/limits/memory
+      value: "512Mi"
+
+- target:
+    group: apps
+    version: v1
+    kind: Deployment
+    name: procure-erp-frontend
+  patch: |-
+    - op: replace
+      path: /spec/replicas
+      value: 2
+    - op: replace
+      path: /spec/template/spec/containers/0/resources/requests/memory
+      value: "128Mi"
+    - op: replace
+      path: /spec/template/spec/containers/0/resources/limits/memory
+      value: "256Mi"
+
+- target:
+    group: autoscaling
+    version: v2
+    kind: HorizontalPodAutoscaler
+    name: procure-erp-backend-hpa
+  patch: |-
+    - op: replace
+      path: /spec/minReplicas
+      value: 2
+    - op: replace
+      path: /spec/maxReplicas
+      value: 6
+
+- target:
+    group: autoscaling
+    version: v2
+    kind: HorizontalPodAutoscaler
+    name: procure-erp-frontend-hpa
+  patch: |-
+    - op: replace
+      path: /spec/minReplicas
+      value: 2
+    - op: replace
+      path: /spec/maxReplicas
+      value: 6
+
+# Replacements for dynamic values
+replacements:
+- source:
+    kind: ConfigMap
+    name: procure-erp-config
+    fieldPath: data.DATABASE_URL
+  targets:
+  - select:
+      kind: Deployment
+      name: procure-erp-backend
+    fieldPaths:
+    - spec.template.spec.containers.[name=backend].env.[name=DATABASE_URL].value

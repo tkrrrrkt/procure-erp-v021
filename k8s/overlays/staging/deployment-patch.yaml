@@ -1,0 +1,235 @@
+# ================================================
+# ProcureERP Staging Deployment Patches
+# ステージング環境デプロイメント修正
+# ================================================
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: procure-erp-backend
+spec:
+  replicas: 2
+  template:
+    spec:
+      containers:
+      - name: backend
+        image: procure-erp-backend:staging
+        env:
+        - name: NODE_ENV
+          value: "staging"
+        - name: LOG_LEVEL
+          value: "debug"
+        - name: ENABLE_SWAGGER
+          value: "true"
+        - name: ENABLE_DEBUG_ROUTES
+          value: "true"
+        - name: RATE_LIMIT_WINDOW_MS
+          value: "900000"  # 15 minutes for staging
+        - name: RATE_LIMIT_MAX_REQUESTS
+          value: "200"     # More lenient for testing
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "300m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3001
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 5
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: 3001
+          initialDelaySeconds: 30
+          periodSeconds: 15
+          timeoutSeconds: 5
+          failureThreshold: 3
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: procure-erp-frontend
+spec:
+  replicas: 2
+  template:
+    spec:
+      containers:
+      - name: frontend
+        image: procure-erp-frontend:staging
+        env:
+        - name: NODE_ENV
+          value: "staging"
+        - name: NEXT_TELEMETRY_DISABLED
+          value: "1"
+        - name: NEXTAUTH_URL
+          value: "https://staging.procure-erp.com"
+        - name: NEXT_PUBLIC_VERCEL_ENV
+          value: "staging"
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "50m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        livenessProbe:
+          httpGet:
+            path: /api/health
+            port: 3000
+          initialDelaySeconds: 45
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 5
+        readinessProbe:
+          httpGet:
+            path: /api/health
+            port: 3000
+          initialDelaySeconds: 20
+          periodSeconds: 15
+          timeoutSeconds: 5
+          failureThreshold: 3
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: procure-erp-nginx
+spec:
+  replicas: 2
+  template:
+    spec:
+      containers:
+      - name: nginx
+        image: procure-erp-nginx:staging
+        env:
+        - name: NGINX_ENV
+          value: "staging"
+        - name: BACKEND_HOST
+          value: "procure-erp-backend-staging"
+        - name: FRONTEND_HOST
+          value: "procure-erp-frontend-staging"
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "25m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        livenessProbe:
+          httpGet:
+            path: /nginx-health
+            port: 80
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /nginx-health
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: procure-erp-postgres
+spec:
+  replicas: 1  # Single instance for staging
+  template:
+    spec:
+      containers:
+      - name: postgres
+        env:
+        - name: POSTGRES_DB
+          value: "procure_erp_staging"
+        - name: POSTGRES_USER
+          value: "procure_erp_user"
+        - name: PGDATA
+          value: "/var/lib/postgresql/data/pgdata"
+        - name: POSTGRES_INITDB_ARGS
+          value: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "200m"
+        livenessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - exec pg_isready -U "procure_erp_user" -d "procure_erp_staging" -h 127.0.0.1 -p 5432
+          initialDelaySeconds: 45
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - exec pg_isready -U "procure_erp_user" -d "procure_erp_staging" -h 127.0.0.1 -p 5432
+          initialDelaySeconds: 15
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: procure-erp-redis
+spec:
+  replicas: 1  # Single instance for staging
+  template:
+    spec:
+      containers:
+      - name: redis
+        args:
+        - redis-server
+        - --appendonly
+        - "yes"
+        - --appendfsync
+        - "everysec"
+        - --maxmemory
+        - "128mb"
+        - --maxmemory-policy
+        - "allkeys-lru"
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "25m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        livenessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 30
+          periodSeconds: 15
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3

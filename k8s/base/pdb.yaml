@@ -1,0 +1,93 @@
+# ================================================
+# ProcureERP Pod Disruption Budget (PDB)
+# 企業級可用性保証設定
+# ================================================
+
+# Backend PDB
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: procure-erp-backend-pdb
+  namespace: procure-erp
+  labels:
+    app: procure-erp
+    component: backend
+    type: disruption-budget
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: procure-erp
+      component: backend
+
+---
+# Frontend PDB
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: procure-erp-frontend-pdb
+  namespace: procure-erp
+  labels:
+    app: procure-erp
+    component: frontend
+    type: disruption-budget
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: procure-erp
+      component: frontend
+
+---
+# Nginx PDB
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: procure-erp-nginx-pdb
+  namespace: procure-erp
+  labels:
+    app: procure-erp
+    component: nginx
+    type: disruption-budget
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: procure-erp
+      component: nginx
+
+---
+# Database PDB
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: procure-erp-postgres-pdb
+  namespace: procure-erp
+  labels:
+    app: procure-erp
+    component: postgres
+    type: disruption-budget
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: procure-erp
+      component: postgres
+
+---
+# Redis PDB
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: procure-erp-redis-pdb
+  namespace: procure-erp
+  labels:
+    app: procure-erp
+    component: redis
+    type: disruption-budget
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: procure-erp
+      component: redis

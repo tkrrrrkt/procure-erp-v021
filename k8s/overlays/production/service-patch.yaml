@@ -1,0 +1,315 @@
+# ================================================
+# ProcureERP Production Service Patches
+# 本番環境Service設定
+# ================================================
+
+# Backend Service - Production
+apiVersion: v1
+kind: Service
+metadata:
+  name: procure-erp-backend
+  annotations:
+    # Service mesh annotations
+    service.istio.io/canonical-name: "procure-erp-backend"
+    service.istio.io/canonical-revision: "v1.0.0"
+    
+    # Load balancing configuration
+    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "http"
+    service.beta.kubernetes.io/aws-load-balancer-connection-idle-timeout: "60"
+    service.beta.kubernetes.io/aws-load-balancer-connection-draining-enabled: "true"
+    service.beta.kubernetes.io/aws-load-balancer-connection-draining-timeout: "300"
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+    
+    # Health check configuration
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-interval: "30"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-timeout: "5"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-healthy-threshold: "2"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-unhealthy-threshold: "3"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-path: "/api/health"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-port: "3000"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-protocol: "HTTP"
+    
+    # Monitoring annotations
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9090"
+    prometheus.io/path: "/metrics"
+    
+    # Production environment labels
+    app.kubernetes.io/version: "v1.0.0"
+    app.kubernetes.io/part-of: "procure-erp"
+    app.kubernetes.io/managed-by: "kustomize"
+    app.kubernetes.io/component: "backend"
+    app.kubernetes.io/tier: "api"
+    
+spec:
+  type: ClusterIP
+  sessionAffinity: None
+  ipFamilyPolicy: SingleStack
+  
+  ports:
+  - name: http
+    port: 80
+    targetPort: 3000
+    protocol: TCP
+  - name: metrics
+    port: 9090
+    targetPort: 9090
+    protocol: TCP
+  
+  selector:
+    app: procure-erp-backend
+    environment: production
+
+---
+# Frontend Service - Production
+apiVersion: v1
+kind: Service
+metadata:
+  name: procure-erp-frontend
+  annotations:
+    # Service mesh annotations
+    service.istio.io/canonical-name: "procure-erp-frontend"
+    service.istio.io/canonical-revision: "v1.0.0"
+    
+    # Load balancing configuration
+    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "http"
+    service.beta.kubernetes.io/aws-load-balancer-connection-idle-timeout: "60"
+    service.beta.kubernetes.io/aws-load-balancer-connection-draining-enabled: "true"
+    service.beta.kubernetes.io/aws-load-balancer-connection-draining-timeout: "300"
+    
+    # Health check configuration
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-interval: "30"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-timeout: "5"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-healthy-threshold: "2"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-unhealthy-threshold: "3"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-path: "/health"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-port: "3000"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-protocol: "HTTP"
+    
+    # CDN configuration
+    service.beta.kubernetes.io/aws-cloudfront-distribution-id: "PROD_DISTRIBUTION_ID"
+    service.beta.kubernetes.io/aws-cloudfront-origin-request-policy: "CORS-S3Origin"
+    
+    # Production environment labels
+    app.kubernetes.io/version: "v1.0.0"
+    app.kubernetes.io/part-of: "procure-erp"
+    app.kubernetes.io/component: "frontend"
+    app.kubernetes.io/tier: "presentation"
+    
+spec:
+  type: ClusterIP
+  sessionAffinity: None
+  ipFamilyPolicy: SingleStack
+  
+  ports:
+  - name: http
+    port: 80
+    targetPort: 3000
+    protocol: TCP
+  
+  selector:
+    app: procure-erp-frontend
+    environment: production
+
+---
+# Nginx Service - Production
+apiVersion: v1
+kind: Service
+metadata:
+  name: procure-erp-nginx
+  annotations:
+    # Service mesh annotations
+    service.istio.io/canonical-name: "procure-erp-nginx"
+    service.istio.io/canonical-revision: "v1.0.0"
+    
+    # Load balancing configuration
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "tcp"
+    service.beta.kubernetes.io/aws-load-balancer-connection-idle-timeout: "60"
+    service.beta.kubernetes.io/aws-load-balancer-connection-draining-enabled: "true"
+    service.beta.kubernetes.io/aws-load-balancer-connection-draining-timeout: "300"
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+    
+    # SSL/TLS configuration
+    service.beta.kubernetes.io/aws-load-balancer-ssl-cert: "arn:aws:acm:us-west-2:123456789012:certificate/prod-cert-id"
+    service.beta.kubernetes.io/aws-load-balancer-ssl-ports: "https"
+    service.beta.kubernetes.io/aws-load-balancer-ssl-negotiation-policy: "ELBSecurityPolicy-TLS-1-2-2017-01"
+    
+    # Health check configuration
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-interval: "10"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-timeout: "5"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-healthy-threshold: "2"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-unhealthy-threshold: "3"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-port: "80"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-protocol: "HTTP"
+    
+    # Monitoring annotations
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9113"
+    prometheus.io/path: "/metrics"
+    
+    # Production environment labels
+    app.kubernetes.io/version: "v1.0.0"
+    app.kubernetes.io/component: "proxy"
+    app.kubernetes.io/tier: "gateway"
+    
+spec:
+  type: LoadBalancer
+  sessionAffinity: None
+  ipFamilyPolicy: SingleStack
+  loadBalancerSourceRanges:
+  - 0.0.0.0/0  # Restrict in production as needed
+  
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+    protocol: TCP
+  - name: https
+    port: 443
+    targetPort: 443
+    protocol: TCP
+  - name: metrics
+    port: 9113
+    targetPort: 9113
+    protocol: TCP
+  
+  selector:
+    app: procure-erp-nginx
+    environment: production
+
+---
+# Postgres Service - Production (Primary)
+apiVersion: v1
+kind: Service
+metadata:
+  name: procure-erp-postgres
+  annotations:
+    # Service mesh annotations
+    service.istio.io/canonical-name: "procure-erp-postgres"
+    service.istio.io/canonical-revision: "v16.0.0"
+    
+    # Database specific configuration
+    service.beta.kubernetes.io/aws-load-balancer-internal: "true"
+    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "tcp"
+    service.beta.kubernetes.io/aws-load-balancer-connection-idle-timeout: "3600"
+    
+    # Health check configuration
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-interval: "30"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-timeout: "5"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-healthy-threshold: "2"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-unhealthy-threshold: "3"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-port: "5432"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-protocol: "TCP"
+    
+    # Monitoring annotations
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9187"
+    prometheus.io/path: "/metrics"
+    
+    # Backup annotations
+    backup.velero.io/backup-volumes: "postgres-data"
+    backup.velero.io/backup-volumes-excludes: "tmp,cache"
+    
+spec:
+  type: ClusterIP
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 3600
+  
+  ports:
+  - name: postgres
+    port: 5432
+    targetPort: 5432
+    protocol: TCP
+  - name: metrics
+    port: 9187
+    targetPort: 9187
+    protocol: TCP
+  
+  selector:
+    app: procure-erp-postgres
+    role: primary
+    environment: production
+
+---
+# Postgres Read Service - Production (Replicas)
+apiVersion: v1
+kind: Service
+metadata:
+  name: procure-erp-postgres-read
+  annotations:
+    service.istio.io/canonical-name: "procure-erp-postgres-read"
+    service.beta.kubernetes.io/aws-load-balancer-internal: "true"
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9187"
+    
+spec:
+  type: ClusterIP
+  sessionAffinity: None
+  
+  ports:
+  - name: postgres
+    port: 5432
+    targetPort: 5432
+    protocol: TCP
+  - name: metrics
+    port: 9187
+    targetPort: 9187
+    protocol: TCP
+  
+  selector:
+    app: procure-erp-postgres
+    role: replica
+    environment: production
+
+---
+# Redis Service - Production (Cluster)
+apiVersion: v1
+kind: Service
+metadata:
+  name: procure-erp-redis
+  annotations:
+    # Service mesh annotations
+    service.istio.io/canonical-name: "procure-erp-redis"
+    service.istio.io/canonical-revision: "v7.0.0"
+    
+    # Cache specific configuration
+    service.beta.kubernetes.io/aws-load-balancer-internal: "true"
+    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "tcp"
+    service.beta.kubernetes.io/aws-load-balancer-connection-idle-timeout: "300"
+    
+    # Health check configuration
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-interval: "30"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-timeout: "5"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-healthy-threshold: "2"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-unhealthy-threshold: "3"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-port: "6379"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-protocol: "TCP"
+    
+    # Monitoring annotations
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9121"
+    prometheus.io/path: "/metrics"
+    
+    # Backup annotations
+    backup.velero.io/backup-volumes: "redis-data"
+    
+spec:
+  type: ClusterIP
+  sessionAffinity: None
+  
+  ports:
+  - name: redis
+    port: 6379
+    targetPort: 6379
+    protocol: TCP
+  - name: metrics
+    port: 9121
+    targetPort: 9121
+    protocol: TCP
+  
+  selector:
+    app: procure-erp-redis
+    environment: production

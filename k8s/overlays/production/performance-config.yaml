@@ -1,0 +1,525 @@
+# ================================================
+# ProcureERP Production Performance Configuration
+# 本番環境パフォーマンス最適化・チューニング設定
+# ================================================
+
+# PostgreSQL Performance Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-performance-config
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp-postgres
+    component: database
+    environment: production
+data:
+  postgresql.conf: |
+    # Connection Settings
+    max_connections = 200
+    superuser_reserved_connections = 3
+    
+    # Memory Settings
+    shared_buffers = 2GB                    # 25% of total RAM
+    effective_cache_size = 6GB              # 75% of total RAM
+    work_mem = 10MB                         # Per connection work memory
+    maintenance_work_mem = 512MB            # Maintenance operations
+    
+    # WAL Settings
+    wal_level = replica
+    wal_buffers = 64MB
+    checkpoint_completion_target = 0.9
+    max_wal_size = 4GB
+    min_wal_size = 1GB
+    checkpoint_timeout = 15min
+    
+    # Query Planner
+    random_page_cost = 1.1                  # SSD optimized
+    effective_io_concurrency = 200          # SSD concurrent I/O
+    
+    # Logging
+    log_destination = 'stderr'
+    logging_collector = on
+    log_directory = 'pg_log'
+    log_filename = 'postgresql-%Y-%m-%d_%H%M%S.log'
+    log_rotation_age = 1d
+    log_rotation_size = 100MB
+    log_min_duration_statement = 1000ms     # Log slow queries
+    log_line_prefix = '%t [%p]: [%l-1] user=%u,db=%d,app=%a,client=%h '
+    log_checkpoints = on
+    log_connections = on
+    log_disconnections = on
+    log_lock_waits = on
+    
+    # Performance Monitoring
+    track_activities = on
+    track_counts = on
+    track_io_timing = on
+    track_functions = pl
+    
+    # Autovacuum
+    autovacuum = on
+    autovacuum_max_workers = 4
+    autovacuum_naptime = 30s
+    autovacuum_vacuum_threshold = 50
+    autovacuum_analyze_threshold = 50
+    autovacuum_vacuum_scale_factor = 0.1
+    autovacuum_analyze_scale_factor = 0.05
+    
+    # Background Writer
+    bgwriter_delay = 50ms
+    bgwriter_lru_maxpages = 1000
+    bgwriter_lru_multiplier = 10.0
+    
+    # Archive Settings (for backup)
+    archive_mode = on
+    archive_command = '/usr/local/bin/archive_command %f %p'
+    archive_timeout = 300s
+
+  pg_hba.conf: |
+    # TYPE  DATABASE        USER            ADDRESS                 METHOD
+    local   all             all                                     peer
+    host    all             all             127.0.0.1/32            md5
+    host    all             all             ::1/128                 md5
+    host    procure_erp_prod procure_erp_user 10.0.0.0/8           md5
+    host    procure_erp_prod procure_erp_user 172.16.0.0/12        md5
+    host    procure_erp_prod procure_erp_user 192.168.0.0/16       md5
+
+---
+# Redis Performance Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-performance-config
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp-redis
+    component: cache
+    environment: production
+data:
+  redis.conf: |
+    # Network
+    bind 0.0.0.0
+    port 6379
+    tcp-backlog 511
+    timeout 0
+    tcp-keepalive 300
+    
+    # General
+    daemonize no
+    supervised no
+    pidfile /var/run/redis_6379.pid
+    loglevel notice
+    logfile ""
+    databases 16
+    
+    # Memory Management
+    maxmemory 4gb
+    maxmemory-policy allkeys-lru
+    maxmemory-samples 5
+    
+    # Persistence
+    save 900 1
+    save 300 10
+    save 60 10000
+    stop-writes-on-bgsave-error yes
+    rdbcompression yes
+    rdbchecksum yes
+    dbfilename dump.rdb
+    dir /data
+    
+    # AOF Persistence
+    appendonly yes
+    appendfilename "appendonly.aof"
+    appendfsync everysec
+    no-appendfsync-on-rewrite no
+    auto-aof-rewrite-percentage 100
+    auto-aof-rewrite-min-size 64mb
+    aof-load-truncated yes
+    
+    # Performance Tuning
+    hash-max-ziplist-entries 512
+    hash-max-ziplist-value 64
+    list-max-ziplist-size -2
+    list-compress-depth 0
+    set-max-intset-entries 512
+    zset-max-ziplist-entries 128
+    zset-max-ziplist-value 64
+    hll-sparse-max-bytes 3000
+    
+    # Client Management
+    timeout 0
+    tcp-keepalive 300
+    client-output-buffer-limit normal 0 0 0
+    client-output-buffer-limit replica 256mb 64mb 60
+    client-output-buffer-limit pubsub 32mb 8mb 60
+    client-query-buffer-limit 1gb
+    
+    # Slow Log
+    slowlog-log-slower-than 10000
+    slowlog-max-len 128
+    
+    # Latency Monitoring
+    latency-monitor-threshold 100
+    
+    # Security
+    protected-mode yes
+    # requirepass will be set via environment variable
+    
+    # Replica Configuration
+    replica-serve-stale-data yes
+    replica-read-only yes
+    repl-diskless-sync no
+    repl-diskless-sync-delay 5
+    repl-disable-tcp-nodelay no
+    replica-priority 100
+
+---
+# Nginx Performance Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-performance-config
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp-nginx
+    component: reverse-proxy
+    environment: production
+data:
+  nginx.conf: |
+    user nginx;
+    worker_processes auto;
+    worker_rlimit_nofile 65535;
+    error_log /var/log/nginx/error.log warn;
+    pid /var/run/nginx.pid;
+    
+    events {
+        worker_connections 4096;
+        use epoll;
+        multi_accept on;
+    }
+    
+    http {
+        include /etc/nginx/mime.types;
+        default_type application/octet-stream;
+        
+        # Performance
+        sendfile on;
+        tcp_nopush on;
+        tcp_nodelay on;
+        keepalive_timeout 65;
+        keepalive_requests 1000;
+        types_hash_max_size 2048;
+        server_tokens off;
+        
+        # Gzip Compression
+        gzip on;
+        gzip_vary on;
+        gzip_min_length 1024;
+        gzip_proxied any;
+        gzip_comp_level 6;
+        gzip_types
+            text/plain
+            text/css
+            text/xml
+            text/javascript
+            application/json
+            application/javascript
+            application/xml+rss
+            application/atom+xml
+            image/svg+xml;
+        
+        # Brotli Compression
+        brotli on;
+        brotli_comp_level 6;
+        brotli_types
+            text/plain
+            text/css
+            application/json
+            application/javascript
+            text/xml
+            application/xml
+            application/xml+rss
+            text/javascript;
+        
+        # Rate Limiting
+        limit_req_zone $binary_remote_addr zone=api:10m rate=10r/s;
+        limit_req_zone $binary_remote_addr zone=login:10m rate=5r/m;
+        limit_conn_zone $binary_remote_addr zone=conn_limit_per_ip:10m;
+        
+        # Caching
+        proxy_cache_path /var/cache/nginx levels=1:2 keys_zone=static_cache:10m max_size=1g inactive=60m use_temp_path=off;
+        proxy_cache_path /var/cache/nginx/api levels=1:2 keys_zone=api_cache:10m max_size=500m inactive=30m use_temp_path=off;
+        
+        # Upstream Configuration
+        upstream backend {
+            least_conn;
+            server procure-erp-backend-0.procure-erp-backend.procure-erp-prod.svc.cluster.local:3000 max_fails=3 fail_timeout=30s;
+            server procure-erp-backend-1.procure-erp-backend.procure-erp-prod.svc.cluster.local:3000 max_fails=3 fail_timeout=30s;
+            server procure-erp-backend-2.procure-erp-backend.procure-erp-prod.svc.cluster.local:3000 max_fails=3 fail_timeout=30s;
+            keepalive 32;
+        }
+        
+        upstream frontend {
+            least_conn;
+            server procure-erp-frontend-0.procure-erp-frontend.procure-erp-prod.svc.cluster.local:3000 max_fails=3 fail_timeout=30s;
+            server procure-erp-frontend-1.procure-erp-frontend.procure-erp-prod.svc.cluster.local:3000 max_fails=3 fail_timeout=30s;
+            keepalive 16;
+        }
+        
+        # Log Format
+        log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                       '$status $body_bytes_sent "$http_referer" '
+                       '"$http_user_agent" "$http_x_forwarded_for" '
+                       'rt=$request_time uct="$upstream_connect_time" '
+                       'uht="$upstream_header_time" urt="$upstream_response_time"';
+        
+        access_log /var/log/nginx/access.log main;
+        
+        # SSL Configuration
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_ciphers ECDHE-RSA-AES256-GCM-SHA512:DHE-RSA-AES256-GCM-SHA512:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES256-GCM-SHA384;
+        ssl_prefer_server_ciphers off;
+        ssl_session_cache shared:SSL:10m;
+        ssl_session_timeout 10m;
+        ssl_stapling on;
+        ssl_stapling_verify on;
+        
+        # Security Headers
+        add_header X-Frame-Options DENY always;
+        add_header X-Content-Type-Options nosniff always;
+        add_header X-XSS-Protection "1; mode=block" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        
+        # Include server blocks
+        include /etc/nginx/conf.d/*.conf;
+    }
+
+  default.conf: |
+    # Health Check Endpoint
+    server {
+        listen 80;
+        server_name localhost;
+        
+        location /nginx-health {
+            access_log off;
+            return 200 "healthy\n";
+            add_header Content-Type text/plain;
+        }
+    }
+    
+    # Main Server Block
+    server {
+        listen 80;
+        listen [::]:80;
+        server_name api.procure-erp.com;
+        
+        # Redirect HTTP to HTTPS
+        return 301 https://$server_name$request_uri;
+    }
+    
+    server {
+        listen 443 ssl http2;
+        listen [::]:443 ssl http2;
+        server_name api.procure-erp.com;
+        
+        # SSL Configuration
+        ssl_certificate /etc/ssl/certs/procure-erp.crt;
+        ssl_certificate_key /etc/ssl/private/procure-erp.key;
+        
+        # Rate Limiting
+        limit_req zone=api burst=20 nodelay;
+        limit_conn conn_limit_per_ip 20;
+        
+        # API Endpoints
+        location /api/ {
+            proxy_pass http://backend;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection 'upgrade';
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_cache_bypass $http_upgrade;
+            proxy_read_timeout 60s;
+            proxy_connect_timeout 10s;
+            proxy_send_timeout 60s;
+            
+            # Caching for specific endpoints
+            location ~* /api/(users|organizations|settings) {
+                proxy_pass http://backend;
+                proxy_cache api_cache;
+                proxy_cache_valid 200 10m;
+                proxy_cache_key $scheme$proxy_host$request_uri$is_args$args;
+                add_header X-Cache-Status $upstream_cache_status;
+            }
+        }
+        
+        # Frontend
+        location / {
+            proxy_pass http://frontend;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection 'upgrade';
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_cache_bypass $http_upgrade;
+            
+            # Static asset caching
+            location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+                proxy_pass http://frontend;
+                proxy_cache static_cache;
+                proxy_cache_valid 200 1h;
+                expires 1h;
+                add_header Cache-Control "public, immutable";
+                add_header X-Cache-Status $upstream_cache_status;
+            }
+        }
+    }
+
+---
+# Application Performance Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-performance-config
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp
+    component: performance
+    environment: production
+data:
+  backend-performance.env: |
+    # Node.js Performance
+    NODE_OPTIONS=--max-old-space-size=2048 --optimize-for-size
+    UV_THREADPOOL_SIZE=64
+    
+    # NestJS Performance
+    THROTTLE_TTL=60
+    THROTTLE_LIMIT=100
+    
+    # Database Performance
+    DATABASE_POOL_MIN=10
+    DATABASE_POOL_MAX=50
+    DATABASE_IDLE_TIMEOUT=30000
+    DATABASE_CONNECTION_TIMEOUT=10000
+    DATABASE_QUERY_TIMEOUT=30000
+    
+    # Redis Performance
+    REDIS_POOL_MIN=5
+    REDIS_POOL_MAX=20
+    REDIS_CONNECT_TIMEOUT=10000
+    REDIS_COMMAND_TIMEOUT=5000
+    REDIS_RETRY_ATTEMPTS=3
+    
+    # Cache Configuration
+    CACHE_TTL_DEFAULT=300
+    CACHE_TTL_USER_SESSION=3600
+    CACHE_TTL_API_RESPONSE=60
+    CACHE_MAX_ITEMS=10000
+    
+    # Performance Monitoring
+    ENABLE_METRICS=true
+    METRICS_INTERVAL=30000
+    SLOW_QUERY_THRESHOLD=1000
+    
+  frontend-performance.env: |
+    # Next.js Performance
+    NEXT_TELEMETRY_DISABLED=1
+    NODE_OPTIONS=--max-old-space-size=1024
+    
+    # Bundle Performance
+    ANALYZE=false
+    BUNDLE_ANALYZER=false
+    
+    # Static Optimization
+    STATIC_OPTIMIZATION=true
+    IMAGE_OPTIMIZATION=true
+    
+    # Cache Configuration
+    SWR_DEDUPE_INTERVAL=2000
+    SWR_CACHE_SIZE=100
+    
+    # Performance Monitoring
+    WEB_VITALS_REPORTING=true
+    PERFORMANCE_OBSERVER=true
+
+---
+# JVM Performance Configuration (if using Java components)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jvm-performance-config
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp
+    component: jvm
+    environment: production
+data:
+  jvm-options: |
+    -Xms2g
+    -Xmx4g
+    -XX:+UseG1GC
+    -XX:G1HeapRegionSize=16m
+    -XX:MaxGCPauseMillis=200
+    -XX:+UseStringDeduplication
+    -XX:+PrintGC
+    -XX:+PrintGCDetails
+    -XX:+PrintGCTimeStamps
+    -XX:+UseGCLogFileRotation
+    -XX:NumberOfGCLogFiles=5
+    -XX:GCLogFileSize=10M
+    -Xloggc:/var/log/gc.log
+    -XX:+HeapDumpOnOutOfMemoryError
+    -XX:HeapDumpPath=/var/log/heap-dump.hprof
+    -Djava.awt.headless=true
+    -Dfile.encoding=UTF-8
+    -Duser.timezone=Asia/Tokyo
+
+---
+# Performance Monitoring Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: performance-monitoring-config
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp
+    component: monitoring
+    environment: production
+data:
+  performance-thresholds.yaml: |
+    response_time:
+      api_endpoints:
+        p50: 200ms
+        p95: 500ms
+        p99: 1000ms
+      database_queries:
+        p50: 50ms
+        p95: 200ms
+        p99: 500ms
+      cache_operations:
+        p50: 10ms
+        p95: 50ms
+        p99: 100ms
+    
+    throughput:
+      requests_per_second: 1000
+      database_queries_per_second: 5000
+      cache_operations_per_second: 10000
+    
+    resource_utilization:
+      cpu_usage: 70%
+      memory_usage: 80%
+      disk_usage: 80%
+      network_bandwidth: 80%
+    
+    error_rates:
+      http_5xx_errors: 1%
+      database_errors: 0.5%
+      cache_errors: 1%
+      timeout_errors: 0.1%

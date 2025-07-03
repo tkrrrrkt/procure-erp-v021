@@ -1,0 +1,285 @@
+# ================================================
+# ProcureERP Security Audit Workflow
+# 企業級セキュリティ監査・脆弱性スキャン自動化
+# ================================================
+
+name: 🛡️ Security Audit & Vulnerability Scan
+
+on:
+  schedule:
+    # 毎日午前2時に実行 (JST)
+    - cron: '0 17 * * *'
+  push:
+    branches: [ main, develop ]
+    paths:
+      - '**/*.js'
+      - '**/*.ts'
+      - '**/*.tsx'
+      - '**/*.json'
+      - '**/package*.json'
+      - '**/Dockerfile'
+      - '**/*.yml'
+      - '**/*.yaml'
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: '20.x'
+
+jobs:
+  # ================================================
+  # Dependency Vulnerability Scan
+  # ================================================
+  dependency-audit:
+    name: 📦 Dependency Vulnerability Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    strategy:
+      matrix:
+        component: [frontend, backend]
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+      
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: ${{ matrix.component }}/package-lock.json
+      
+      - name: 🔍 NPM Security Audit
+        run: |
+          cd ${{ matrix.component }}
+          npm audit --audit-level=moderate --production
+      
+      - name: 🛡️ Snyk Security Scan
+        uses: snyk/actions/node@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --severity-threshold=high --file=${{ matrix.component }}/package.json
+      
+      - name: 📊 Upload Snyk Results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: snyk.sarif
+
+  # ================================================
+  # Container Security Scan
+  # ================================================
+  container-security:
+    name: 🐳 Container Security Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    
+    strategy:
+      matrix:
+        component: [frontend, backend, nginx]
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+      
+      - name: 🐳 Build Docker Image
+        run: |
+          docker build -f docker/${{ matrix.component }}/Dockerfile -t procure-erp/${{ matrix.component }}:security-test .
+      
+      - name: 🔍 Trivy Container Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'procure-erp/${{ matrix.component }}:security-test'
+          format: 'sarif'
+          output: 'trivy-${{ matrix.component }}.sarif'
+      
+      - name: 📊 Upload Trivy Results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-${{ matrix.component }}.sarif'
+      
+      - name: 🛡️ Grype Vulnerability Scan
+        uses: anchore/scan-action@v3
+        with:
+          image: 'procure-erp/${{ matrix.component }}:security-test'
+          severity-cutoff: 'medium'
+          fail-build: true
+
+  # ================================================
+  # SAST (Static Application Security Testing)
+  # ================================================
+  static-analysis:
+    name: 🔬 Static Security Analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: 🔍 Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript, typescript
+          queries: security-extended,security-and-quality
+      
+      - name: 🏗️ Autobuild
+        uses: github/codeql-action/autobuild@v3
+      
+      - name: 🔍 Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+      
+      - name: 🛡️ SonarCloud Security Scan
+        uses: SonarSource/sonarcloud-github-action@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          args: >
+            -Dsonar.projectKey=procure-erp
+            -Dsonar.organization=procure-erp-org
+            -Dsonar.sources=frontend/src,backend/src
+            -Dsonar.exclusions=**/*.spec.ts,**/*.test.ts,**/node_modules/**
+
+  # ================================================
+  # Secret Detection
+  # ================================================
+  secret-detection:
+    name: 🔐 Secret Detection Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: 🔍 GitLeaks Secret Scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+      
+      - name: 🔐 TruffleHog Secret Scan
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: main
+          head: HEAD
+          extra_args: --debug --only-verified
+
+  # ================================================
+  # License Compliance
+  # ================================================
+  license-compliance:
+    name: 📜 License Compliance Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    
+    strategy:
+      matrix:
+        component: [frontend, backend]
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+      
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: ${{ matrix.component }}/package-lock.json
+      
+      - name: 📦 Install Dependencies
+        run: |
+          cd ${{ matrix.component }}
+          npm ci --prefer-offline --no-audit
+      
+      - name: 📜 License Check
+        run: |
+          cd ${{ matrix.component }}
+          npx license-checker --summary --excludePrivatePackages
+      
+      - name: 🚫 Check Forbidden Licenses
+        run: |
+          cd ${{ matrix.component }}
+          npx license-checker --failOn 'GPL-2.0;GPL-3.0;AGPL-1.0;AGPL-3.0;LGPL-2.0;LGPL-2.1;LGPL-3.0'
+
+  # ================================================
+  # Security Report Generation
+  # ================================================
+  security-report:
+    name: 📊 Security Report Generation
+    runs-on: ubuntu-latest
+    needs: [dependency-audit, container-security, static-analysis, secret-detection, license-compliance]
+    if: always()
+    timeout-minutes: 10
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+      
+      - name: 📊 Generate Security Report
+        run: |
+          echo "# 🛡️ Security Audit Report - $(date)" > security-report.md
+          echo "" >> security-report.md
+          echo "## Summary" >> security-report.md
+          echo "- **Repository**: ${{ github.repository }}" >> security-report.md
+          echo "- **Branch**: ${{ github.ref_name }}" >> security-report.md
+          echo "- **Commit**: ${{ github.sha }}" >> security-report.md
+          echo "- **Scan Date**: $(date -u)" >> security-report.md
+          echo "" >> security-report.md
+          echo "## Scan Results" >> security-report.md
+          echo "- **Dependency Audit**: ${{ needs.dependency-audit.result }}" >> security-report.md
+          echo "- **Container Security**: ${{ needs.container-security.result }}" >> security-report.md
+          echo "- **Static Analysis**: ${{ needs.static-analysis.result }}" >> security-report.md
+          echo "- **Secret Detection**: ${{ needs.secret-detection.result }}" >> security-report.md
+          echo "- **License Compliance**: ${{ needs.license-compliance.result }}" >> security-report.md
+      
+      - name: 📤 Upload Security Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-audit-report
+          path: security-report.md
+          retention-days: 30
+      
+      - name: 📢 Notify Security Team
+        if: failure()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: failure
+          channel: '#security'
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+          fields: repo,message,commit,author,action,eventName,ref,workflow
+          custom_payload: |
+            {
+              attachments: [{
+                color: 'danger',
+                title: '🚨 Security Audit Failed',
+                text: 'Security vulnerabilities detected in ${{ github.repository }}',
+                fields: [{
+                  title: 'Repository',
+                  value: '${{ github.repository }}',
+                  short: true
+                }, {
+                  title: 'Branch',
+                  value: '${{ github.ref_name }}',
+                  short: true
+                }, {
+                  title: 'Commit',
+                  value: '${{ github.sha }}',
+                  short: false
+                }]
+              }]
+            }

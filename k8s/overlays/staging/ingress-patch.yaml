@@ -1,0 +1,109 @@
+# ================================================
+# ProcureERP Staging Ingress Patches
+# ステージング環境Ingress設定
+# ================================================
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: procure-erp-ingress
+  annotations:
+    # Staging-specific annotations
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      add_header X-Environment "staging" always;
+      add_header X-Robots-Tag "noindex, nofollow" always;
+    
+    # Rate limiting (more lenient for staging)
+    nginx.ingress.kubernetes.io/rate-limit: "200"
+    nginx.ingress.kubernetes.io/rate-limit-window: "1m"
+    nginx.ingress.kubernetes.io/rate-limit-connections: "50"
+    
+    # SSL configuration
+    cert-manager.io/cluster-issuer: "letsencrypt-staging"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    
+    # CORS for staging
+    nginx.ingress.kubernetes.io/cors-allow-origin: "https://staging.procure-erp.com"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, PUT, DELETE, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization,X-CSRF-Token"
+    nginx.ingress.kubernetes.io/cors-expose-headers: "Content-Length,Content-Range"
+    nginx.ingress.kubernetes.io/cors-max-age: "1728000"
+    nginx.ingress.kubernetes.io/cors-allow-credentials: "true"
+    
+    # Security headers
+    nginx.ingress.kubernetes.io/server-snippet: |
+      add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+      add_header X-Frame-Options "SAMEORIGIN" always;
+      add_header X-Content-Type-Options "nosniff" always;
+      add_header X-XSS-Protection "1; mode=block" always;
+      add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+      add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' dev-22lwwfj3g02rol8a.jp.auth0.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' dev-22lwwfj3g02rol8a.jp.auth0.com https://staging-api.procure-erp.com; frame-src dev-22lwwfj3g02rol8a.jp.auth0.com; object-src 'none'; base-uri 'self'; form-action 'self';" always;
+    
+    # External DNS for staging
+    external-dns.alpha.kubernetes.io/hostname: "staging.procure-erp.com,staging-api.procure-erp.com"
+    external-dns.alpha.kubernetes.io/ttl: "300"
+    
+    # Load balancer annotations
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "tcp"
+    service.beta.kubernetes.io/aws-load-balancer-ssl-cert: "arn:aws:acm:us-west-2:123456789012:certificate/staging-cert-id"
+    
+    # Monitoring
+    nginx.ingress.kubernetes.io/enable-access-log: "true"
+    nginx.ingress.kubernetes.io/access-log-path: "/var/log/nginx/staging-access.log"
+    nginx.ingress.kubernetes.io/error-log-path: "/var/log/nginx/staging-error.log"
+    
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - staging.procure-erp.com
+    - www.staging.procure-erp.com
+    - staging-api.procure-erp.com
+    secretName: procure-erp-staging-tls
+  
+  rules:
+  # Main staging domain
+  - host: staging.procure-erp.com
+    http:
+      paths:
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: procure-erp-backend-staging
+            port:
+              number: 80
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: procure-erp-frontend-staging
+            port:
+              number: 80
+  
+  # WWW redirect for staging
+  - host: www.staging.procure-erp.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: procure-erp-frontend-staging
+            port:
+              number: 80
+  
+  # API subdomain for staging
+  - host: staging-api.procure-erp.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: procure-erp-backend-staging
+            port:
+              number: 80

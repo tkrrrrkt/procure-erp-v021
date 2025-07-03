@@ -1,0 +1,366 @@
+# ================================================
+# ProcureERP Production Backup Configuration
+# 本番環境バックアップ設定
+# ================================================
+
+# Velero Backup Schedule for Database
+apiVersion: velero.io/v1
+kind: Schedule
+metadata:
+  name: procure-erp-postgres-backup
+  labels:
+    app: procure-erp
+    component: postgres
+    environment: production
+spec:
+  schedule: "0 2 * * *"  # Daily at 2 AM
+  template:
+    metadata:
+      name: procure-erp-postgres-backup-{{.Date}}-{{.Time}}
+      labels:
+        app: procure-erp
+        component: postgres
+        backup-type: scheduled
+    spec:
+      includedNamespaces:
+      - procure-erp-prod
+      
+      includedResources:
+      - persistentvolumes
+      - persistentvolumeclaims
+      - secrets
+      - configmaps
+      - deployments
+      - services
+      
+      labelSelector:
+        matchLabels:
+          app: procure-erp-postgres
+          environment: production
+      
+      snapshotVolumes: true
+      ttl: 720h0m0s  # 30 days retention
+      
+      hooks:
+        resources:
+        - name: postgres-backup-hook
+          includedNamespaces:
+          - procure-erp-prod
+          excludedNamespaces: []
+          includedResources:
+          - pods
+          excludedResources: []
+          labelSelector:
+            matchLabels:
+              app: procure-erp-postgres
+              role: primary
+          pre:
+          - exec:
+              container: postgres
+              command:
+              - /bin/bash
+              - -c
+              - |
+                echo "Starting PostgreSQL backup preparation..."
+                export PGPASSWORD="$POSTGRES_PASSWORD"
+                
+                # Create consistent backup
+                pg_dump -h localhost -U procure_erp_user -d procure_erp_prod \
+                  --verbose --clean --if-exists --create \
+                  --format=custom --compress=9 \
+                  --file=/backup/procure_erp_$(date +%Y%m%d_%H%M%S).backup
+                
+                # Create logical backup for point-in-time recovery
+                pg_basebackup -h localhost -U procure_erp_user -D /backup/basebackup \
+                  --format=tar --gzip --compress=9 --progress --verbose
+                
+                echo "PostgreSQL backup preparation completed"
+              timeout: 30m
+          post:
+          - exec:
+              container: postgres
+              command:
+              - /bin/bash
+              - -c
+              - |
+                echo "PostgreSQL backup cleanup..."
+                find /tmp -name "*.tmp" -type f -delete
+                echo "Cleanup completed"
+
+---
+# Velero Backup Schedule for Redis
+apiVersion: velero.io/v1
+kind: Schedule
+metadata:
+  name: procure-erp-redis-backup
+  labels:
+    app: procure-erp
+    component: redis
+    environment: production
+spec:
+  schedule: "0 3 * * *"  # Daily at 3 AM
+  template:
+    metadata:
+      name: procure-erp-redis-backup-{{.Date}}-{{.Time}}
+    spec:
+      includedNamespaces:
+      - procure-erp-prod
+      
+      labelSelector:
+        matchLabels:
+          app: procure-erp-redis
+          environment: production
+      
+      snapshotVolumes: true
+      ttl: 168h0m0s  # 7 days retention
+      
+      hooks:
+        resources:
+        - name: redis-backup-hook
+          includedNamespaces:
+          - procure-erp-prod
+          labelSelector:
+            matchLabels:
+              app: procure-erp-redis
+          pre:
+          - exec:
+              container: redis
+              command:
+              - /bin/bash
+              - -c
+              - |
+                echo "Starting Redis backup..."
+                redis-cli --rdb /backup/redis_$(date +%Y%m%d_%H%M%S).rdb
+                redis-cli BGSAVE
+                while [ $(redis-cli LASTSAVE) -eq $(redis-cli LASTSAVE) ]; do
+                  sleep 1
+                done
+                echo "Redis backup completed"
+
+---
+# Velero Backup Schedule for Application Configs
+apiVersion: velero.io/v1
+kind: Schedule
+metadata:
+  name: procure-erp-config-backup
+  labels:
+    app: procure-erp
+    component: config
+    environment: production
+spec:
+  schedule: "0 1 * * 0"  # Weekly on Sunday at 1 AM
+  template:
+    metadata:
+      name: procure-erp-config-backup-{{.Date}}-{{.Time}}
+    spec:
+      includedNamespaces:
+      - procure-erp-prod
+      
+      includedResources:
+      - configmaps
+      - secrets
+      - ingresses
+      - services
+      - horizontalpodautoscalers
+      - networkpolicies
+      - servicemonitors
+      - prometheusrules
+      
+      excludedResources:
+      - pods
+      - replicasets
+      - events
+      
+      snapshotVolumes: false
+      ttl: 2160h0m0s  # 90 days retention
+
+---
+# Full System Backup (Monthly)
+apiVersion: velero.io/v1
+kind: Schedule
+metadata:
+  name: procure-erp-full-backup
+  labels:
+    app: procure-erp
+    component: full-system
+    environment: production
+spec:
+  schedule: "0 0 1 * *"  # Monthly on 1st day at midnight
+  template:
+    metadata:
+      name: procure-erp-full-backup-{{.Date}}-{{.Time}}
+    spec:
+      includedNamespaces:
+      - procure-erp-prod
+      
+      includeClusterResources: true
+      snapshotVolumes: true
+      ttl: 8760h0m0s  # 1 year retention
+      
+      hooks:
+        resources:
+        - name: full-backup-notification
+          includedNamespaces:
+          - procure-erp-prod
+          labelSelector: {}
+          pre:
+          - exec:
+              container: backend
+              command:
+              - /bin/bash
+              - -c
+              - |
+                echo "Full system backup starting..."
+                curl -X POST "$SLACK_WEBHOOK_URL" \
+                  -H 'Content-type: application/json' \
+                  --data '{"text":"🔄 ProcureERP Full System Backup Started - Production Environment"}'
+          post:
+          - exec:
+              container: backend
+              command:
+              - /bin/bash
+              - -c
+              - |
+                echo "Full system backup completed"
+                curl -X POST "$SLACK_WEBHOOK_URL" \
+                  -H 'Content-type: application/json' \
+                  --data '{"text":"✅ ProcureERP Full System Backup Completed Successfully - Production Environment"}'
+
+---
+# Backup Storage Location
+apiVersion: velero.io/v1
+kind: BackupStorageLocation
+metadata:
+  name: procure-erp-backup-storage
+  labels:
+    app: procure-erp
+    environment: production
+spec:
+  provider: aws
+  objectStorage:
+    bucket: procure-erp-backups-prod
+    prefix: kubernetes-backups
+  config:
+    region: us-west-2
+    s3ForcePathStyle: "false"
+    s3Url: https://s3.us-west-2.amazonaws.com
+    insecureSkipTLSVerify: "false"
+  
+  # Backup validation
+  validationFrequency: 24h
+  
+  accessMode: ReadWrite
+
+---
+# Volume Snapshot Location
+apiVersion: velero.io/v1
+kind: VolumeSnapshotLocation
+metadata:
+  name: procure-erp-snapshot-location
+  labels:
+    app: procure-erp
+    environment: production
+spec:
+  provider: aws
+  config:
+    region: us-west-2
+    profile: "default"
+
+---
+# Restore Configuration Template
+apiVersion: velero.io/v1
+kind: Restore
+metadata:
+  name: procure-erp-restore-template
+  labels:
+    app: procure-erp
+    environment: production-restore
+spec:
+  backupName: # To be filled during actual restore
+  
+  includedNamespaces:
+  - procure-erp-prod
+  
+  excludedResources:
+  - nodes
+  - events
+  - events.events.k8s.io
+  - backups.velero.io
+  - restores.velero.io
+  - schedules.velero.io
+  
+  restorePVs: true
+  
+  namespaceMapping:
+    procure-erp-prod: procure-erp-restore
+  
+  hooks:
+    resources:
+    - name: postgres-restore-hook
+      includedNamespaces:
+      - procure-erp-restore
+      labelSelector:
+        matchLabels:
+          app: procure-erp-postgres
+      post:
+      - exec:
+          container: postgres
+          command:
+          - /bin/bash
+          - -c
+          - |
+            echo "Starting PostgreSQL post-restore tasks..."
+            export PGPASSWORD="$POSTGRES_PASSWORD"
+            
+            # Verify database integrity
+            psql -h localhost -U procure_erp_user -d procure_erp_prod -c "SELECT version();"
+            
+            # Update statistics
+            psql -h localhost -U procure_erp_user -d procure_erp_prod -c "ANALYZE;"
+            
+            # Verify tenant data integrity
+            psql -h localhost -U procure_erp_user -d procure_erp_prod -c "
+              SELECT tenant_id, COUNT(*) as record_count 
+              FROM users 
+              GROUP BY tenant_id 
+              ORDER BY tenant_id;
+            "
+            
+            echo "PostgreSQL restore verification completed"
+          timeout: 10m
+
+---
+# Backup Monitoring Alert
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: procure-erp-backup-alerts
+  labels:
+    app: procure-erp
+    component: backup
+    environment: production
+spec:
+  groups:
+  - name: backup.alerts
+    rules:
+    - alert: BackupFailed
+      expr: |
+        velero_backup_failure_total{schedule="procure-erp-postgres-backup"} > 0
+      for: 1m
+      labels:
+        severity: critical
+        service: backup
+      annotations:
+        summary: "ProcureERP backup failed"
+        description: "Backup job {{ $labels.schedule }} has failed"
+    
+    - alert: BackupDelayed  
+      expr: |
+        time() - velero_backup_last_successful_timestamp{schedule="procure-erp-postgres-backup"} > 86400
+      for: 5m
+      labels:
+        severity: warning
+        service: backup
+      annotations:
+        summary: "ProcureERP backup is overdue"
+        description: "Last successful backup was {{ $value | humanizeDuration }} ago"

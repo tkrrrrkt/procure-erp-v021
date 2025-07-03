@@ -1,0 +1,481 @@
+# ================================================
+# ProcureERP Production Health Check Configuration
+# 本番環境ヘルスチェック・可用性監視設定
+# ================================================
+
+# Readiness and Liveness Probe Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: health-check-config
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp
+    component: health-check
+    environment: production
+data:
+  # Backend Health Check Configuration
+  backend-liveness.yaml: |
+    httpGet:
+      path: /health/live
+      port: 3000
+      scheme: HTTP
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+    successThreshold: 1
+
+  backend-readiness.yaml: |
+    httpGet:
+      path: /health/ready
+      port: 3000
+      scheme: HTTP
+    initialDelaySeconds: 15
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+    successThreshold: 1
+
+  backend-startup.yaml: |
+    httpGet:
+      path: /health/startup
+      port: 3000
+      scheme: HTTP
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 30
+    successThreshold: 1
+
+  # Frontend Health Check Configuration
+  frontend-liveness.yaml: |
+    httpGet:
+      path: /api/health
+      port: 3000
+      scheme: HTTP
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+    successThreshold: 1
+
+  frontend-readiness.yaml: |
+    httpGet:
+      path: /api/health/ready
+      port: 3000
+      scheme: HTTP
+    initialDelaySeconds: 15
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+    successThreshold: 1
+
+  # Database Health Check Configuration
+  postgres-liveness.yaml: |
+    exec:
+      command:
+      - /bin/sh
+      - -c
+      - pg_isready -U procure_erp_user -d procure_erp_prod
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+    successThreshold: 1
+
+  postgres-readiness.yaml: |
+    exec:
+      command:
+      - /bin/sh
+      - -c
+      - pg_isready -U procure_erp_user -d procure_erp_prod && psql -U procure_erp_user -d procure_erp_prod -c "SELECT 1"
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+    successThreshold: 1
+
+  # Redis Health Check Configuration
+  redis-liveness.yaml: |
+    exec:
+      command:
+      - redis-cli
+      - ping
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+    successThreshold: 1
+
+  redis-readiness.yaml: |
+    exec:
+      command:
+      - redis-cli
+      - ping
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+    successThreshold: 1
+
+  # Nginx Health Check Configuration
+  nginx-liveness.yaml: |
+    httpGet:
+      path: /nginx-health
+      port: 80
+      scheme: HTTP
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+    successThreshold: 1
+
+  nginx-readiness.yaml: |
+    httpGet:
+      path: /nginx-health
+      port: 80
+      scheme: HTTP
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+    successThreshold: 1
+
+---
+# External Health Check Service (Load Balancer Health Check)
+apiVersion: v1
+kind: Service
+metadata:
+  name: procure-erp-health-check
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp
+    component: health-check
+    environment: production
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-healthy-threshold: "2"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-unhealthy-threshold: "2"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-interval: "10"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-timeout: "5"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-path: "/health/live"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-port: "3000"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-protocol: "HTTP"
+spec:
+  type: LoadBalancer
+  selector:
+    app: procure-erp-nginx
+    environment: production
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+    protocol: TCP
+  - name: https
+    port: 443
+    targetPort: 443
+    protocol: TCP
+
+---
+# Health Check Deployment for System-wide Monitoring
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: procure-erp-health-monitor
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp-health-monitor
+    component: monitoring
+    environment: production
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: procure-erp-health-monitor
+      environment: production
+  template:
+    metadata:
+      labels:
+        app: procure-erp-health-monitor
+        environment: production
+    spec:
+      serviceAccountName: procure-erp-health-monitor
+      containers:
+      - name: health-monitor
+        image: prom/blackbox-exporter:v0.24.0
+        ports:
+        - containerPort: 9115
+          name: http
+        resources:
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+        volumeMounts:
+        - name: config
+          mountPath: /etc/blackbox_exporter/
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 9115
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 9115
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: config
+        configMap:
+          name: blackbox-exporter-config
+
+---
+# Blackbox Exporter Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: blackbox-exporter-config
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp-health-monitor
+    environment: production
+data:
+  blackbox.yml: |
+    modules:
+      http_2xx:
+        prober: http
+        timeout: 5s
+        http:
+          valid_http_versions: ["HTTP/1.1", "HTTP/2.0"]
+          valid_status_codes: [200]
+          method: GET
+          headers:
+            Host: api.procure-erp.com
+            User-Agent: "ProcureERP-HealthCheck/1.0"
+          fail_if_ssl: false
+          fail_if_not_ssl: true
+          tls_config:
+            insecure_skip_verify: false
+
+      http_post_2xx:
+        prober: http
+        timeout: 5s
+        http:
+          valid_http_versions: ["HTTP/1.1", "HTTP/2.0"]
+          valid_status_codes: [200, 201]
+          method: POST
+          headers:
+            Content-Type: "application/json"
+            User-Agent: "ProcureERP-HealthCheck/1.0"
+          body: '{"health_check": true}'
+
+      tcp_connect:
+        prober: tcp
+        timeout: 5s
+
+      icmp:
+        prober: icmp
+        timeout: 5s
+
+---
+# Service Account for Health Monitor
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: procure-erp-health-monitor
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp-health-monitor
+    environment: production
+
+---
+# Service for Health Monitor
+apiVersion: v1
+kind: Service
+metadata:
+  name: procure-erp-health-monitor
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp-health-monitor
+    environment: production
+spec:
+  selector:
+    app: procure-erp-health-monitor
+  ports:
+  - name: http
+    port: 9115
+    targetPort: 9115
+    protocol: TCP
+
+---
+# ServiceMonitor for Health Check Monitoring
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: procure-erp-health-monitor
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp-health-monitor
+    environment: production
+spec:
+  selector:
+    matchLabels:
+      app: procure-erp-health-monitor
+  endpoints:
+  - port: http
+    interval: 30s
+    path: /metrics
+
+---
+# Prometheus Rules for Health Check Alerts
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: procure-erp-health-alerts
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp
+    component: health-check
+    environment: production
+spec:
+  groups:
+  - name: procure-erp-health
+    rules:
+    - alert: ServiceDown
+      expr: up{job="procure-erp-backend"} == 0
+      for: 2m
+      labels:
+        severity: critical
+        component: backend
+      annotations:
+        summary: "ProcureERP Backend service is down"
+        description: "Backend service has been down for more than 2 minutes"
+
+    - alert: ServiceDown
+      expr: up{job="procure-erp-frontend"} == 0
+      for: 2m
+      labels:
+        severity: critical
+        component: frontend
+      annotations:
+        summary: "ProcureERP Frontend service is down"
+        description: "Frontend service has been down for more than 2 minutes"
+
+    - alert: DatabaseDown
+      expr: up{job="procure-erp-postgres"} == 0
+      for: 1m
+      labels:
+        severity: critical
+        component: database
+      annotations:
+        summary: "ProcureERP Database is down"
+        description: "PostgreSQL database has been down for more than 1 minute"
+
+    - alert: CacheDown
+      expr: up{job="procure-erp-redis"} == 0
+      for: 1m
+      labels:
+        severity: critical
+        component: cache
+      annotations:
+        summary: "ProcureERP Cache is down"
+        description: "Redis cache has been down for more than 1 minute"
+
+    - alert: HighLatency
+      expr: |
+        histogram_quantile(0.95, 
+          sum(rate(http_request_duration_seconds_bucket{job="procure-erp-backend"}[5m])) by (le)
+        ) > 1
+      for: 5m
+      labels:
+        severity: warning
+        component: backend
+      annotations:
+        summary: "High latency detected"
+        description: "95th percentile latency is above 1 second for 5 minutes"
+
+    - alert: HighErrorRate
+      expr: |
+        sum(rate(http_requests_total{job="procure-erp-backend",status=~"5.."}[5m])) /
+        sum(rate(http_requests_total{job="procure-erp-backend"}[5m])) > 0.05
+      for: 5m
+      labels:
+        severity: warning
+        component: backend
+      annotations:
+        summary: "High 5xx error rate"
+        description: "Error rate is above 5% for 5 minutes"
+
+    - alert: ExternalHealthCheckFailed
+      expr: probe_success{job="blackbox"} == 0
+      for: 3m
+      labels:
+        severity: critical
+        component: external
+      annotations:
+        summary: "External health check failed"
+        description: "External health check for {{ $labels.instance }} has been failing for 3 minutes"
+
+    - alert: SSLCertificateExpiringSoon
+      expr: probe_ssl_earliest_cert_expiry - time() < 86400 * 7
+      for: 1h
+      labels:
+        severity: warning
+        component: ssl
+      annotations:
+        summary: "SSL certificate expiring soon"
+        description: "SSL certificate for {{ $labels.instance }} expires in less than 7 days"
+
+    - alert: SSLCertificateExpired
+      expr: probe_ssl_earliest_cert_expiry - time() <= 0
+      for: 1m
+      labels:
+        severity: critical
+        component: ssl
+      annotations:
+        summary: "SSL certificate expired"
+        description: "SSL certificate for {{ $labels.instance }} has expired"
+
+---
+# Startup Probe Configuration for Slow Starting Services
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: startup-probe-config
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp
+    component: health-check
+    environment: production
+data:
+  backend-startup-probe.yaml: |
+    # Extended startup probe for backend (allows up to 5 minutes startup time)
+    httpGet:
+      path: /health/startup
+      port: 3000
+      scheme: HTTP
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 30  # 30 * 10s = 5 minutes
+    successThreshold: 1
+
+  database-startup-probe.yaml: |
+    # Extended startup probe for database
+    exec:
+      command:
+      - /bin/sh
+      - -c
+      - pg_isready -U procure_erp_user -d procure_erp_prod
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 18  # 18 * 10s = 3 minutes
+    successThreshold: 1

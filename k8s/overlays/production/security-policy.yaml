@@ -1,0 +1,415 @@
+# ================================================
+# ProcureERP Production Security Policies
+# 本番環境セキュリティポリシー設定
+# ================================================
+
+# Pod Security Policy for Production
+apiVersion: policy/v1beta1
+kind: PodSecurityPolicy
+metadata:
+  name: procure-erp-prod-psp
+  labels:
+    app: procure-erp
+    environment: production
+    security: restricted
+spec:
+  # Privilege escalation
+  allowPrivilegeEscalation: false
+  requiredDropCapabilities:
+  - ALL
+  
+  # User/Group restrictions
+  runAsUser:
+    rule: MustRunAsNonRoot
+  runAsGroup:
+    rule: MustRunAs
+    ranges:
+    - min: 1000
+      max: 65535
+  fsGroup:
+    rule: MustRunAs
+    ranges:
+    - min: 1000
+      max: 65535
+  
+  # Volume restrictions
+  volumes:
+  - configMap
+  - emptyDir
+  - projected
+  - secret
+  - downwardAPI
+  - persistentVolumeClaim
+  - csi
+  
+  # Filesystem restrictions
+  readOnlyRootFilesystem: true
+  allowedFlexVolumes: []
+  allowedUnsafeSysctls: []
+  forbiddenSysctls:
+  - '*'
+  
+  # Network restrictions
+  hostNetwork: false
+  hostIPC: false
+  hostPID: false
+  hostPorts: []
+  
+  # SELinux (if enabled)
+  seLinux:
+    rule: RunAsAny
+  
+  # Supplemental groups
+  supplementalGroups:
+    rule: MustRunAs
+    ranges:
+    - min: 1000
+      max: 65535
+
+---
+# Pod Security Policy for Database (Slightly Relaxed)
+apiVersion: policy/v1beta1
+kind: PodSecurityPolicy
+metadata:
+  name: procure-erp-database-psp
+  labels:
+    app: procure-erp
+    component: database
+    environment: production
+spec:
+  allowPrivilegeEscalation: false
+  requiredDropCapabilities:
+  - ALL
+  allowedCapabilities:
+  - CHOWN
+  - SETGID
+  - SETUID
+  - DAC_OVERRIDE
+  
+  runAsUser:
+    rule: MustRunAs
+    ranges:
+    - min: 999
+      max: 999  # postgres user
+  runAsGroup:
+    rule: MustRunAs
+    ranges:
+    - min: 999
+      max: 999
+  fsGroup:
+    rule: MustRunAs
+    ranges:
+    - min: 999
+      max: 999
+  
+  readOnlyRootFilesystem: false  # Database needs write access
+  volumes:
+  - configMap
+  - emptyDir
+  - projected
+  - secret
+  - downwardAPI
+  - persistentVolumeClaim
+  
+  hostNetwork: false
+  hostIPC: false
+  hostPID: false
+  
+  seLinux:
+    rule: RunAsAny
+  
+  supplementalGroups:
+    rule: MustRunAs
+    ranges:
+    - min: 999
+      max: 999
+
+---
+# RBAC for Pod Security Policy
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: procure-erp-prod-psp-user
+  labels:
+    app: procure-erp
+    environment: production
+rules:
+- apiGroups: ['policy']
+  resources: ['podsecuritypolicies']
+  verbs: ['use']
+  resourceNames:
+  - procure-erp-prod-psp
+  - procure-erp-database-psp
+
+---
+# RBAC Binding for Application Service Accounts
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: procure-erp-prod-psp-binding
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp
+    environment: production
+roleRef:
+  kind: ClusterRole
+  name: procure-erp-prod-psp-user
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+- kind: ServiceAccount
+  name: procure-erp-backend-sa
+  namespace: procure-erp-prod
+- kind: ServiceAccount
+  name: procure-erp-frontend-sa
+  namespace: procure-erp-prod
+- kind: ServiceAccount
+  name: procure-erp-nginx-sa
+  namespace: procure-erp-prod
+- kind: ServiceAccount
+  name: procure-erp-postgres-sa
+  namespace: procure-erp-prod
+- kind: ServiceAccount
+  name: procure-erp-redis-sa
+  namespace: procure-erp-prod
+
+---
+# Network Policy for Production Environment
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: procure-erp-prod-network-policy
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp
+    environment: production
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+  
+  # Deny all by default
+  ingress: []
+  egress: []
+
+---
+# Network Policy for Backend
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: procure-erp-backend-netpol
+  namespace: procure-erp-prod
+spec:
+  podSelector:
+    matchLabels:
+      app: procure-erp-backend
+      environment: production
+  
+  policyTypes:
+  - Ingress
+  - Egress
+  
+  ingress:
+  # Allow ingress from nginx
+  - from:
+    - podSelector:
+        matchLabels:
+          app: procure-erp-nginx
+    ports:
+    - protocol: TCP
+      port: 3000
+  # Allow ingress from ingress controller
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+    ports:
+    - protocol: TCP
+      port: 3000
+  # Allow monitoring
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 9090
+  
+  egress:
+  # Allow egress to database
+  - to:
+    - podSelector:
+        matchLabels:
+          app: procure-erp-postgres
+    ports:
+    - protocol: TCP
+      port: 5432
+  # Allow egress to redis
+  - to:
+    - podSelector:
+        matchLabels:
+          app: procure-erp-redis
+    ports:
+    - protocol: TCP
+      port: 6379
+  # Allow DNS
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+  # Allow HTTPS to Auth0
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+
+---
+# Service Account for Backend
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: procure-erp-backend-sa
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp-backend
+    environment: production
+  annotations:
+    eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/ProcureERP-Backend-Role"
+automountServiceAccountToken: true
+
+---
+# Service Account for Frontend
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: procure-erp-frontend-sa
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp-frontend
+    environment: production
+  annotations:
+    eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/ProcureERP-Frontend-Role"
+automountServiceAccountToken: true
+
+---
+# Service Account for Nginx
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: procure-erp-nginx-sa
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp-nginx
+    environment: production
+automountServiceAccountToken: false
+
+---
+# Service Account for PostgreSQL
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: procure-erp-postgres-sa
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp-postgres
+    environment: production
+  annotations:
+    eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/ProcureERP-Database-Role"
+automountServiceAccountToken: true
+
+---
+# Service Account for Redis
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: procure-erp-redis-sa
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp-redis
+    environment: production
+  annotations:
+    eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/ProcureERP-Cache-Role"
+automountServiceAccountToken: true
+
+---
+# Security Context Constraints (OpenShift)
+apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: procure-erp-prod-scc
+  labels:
+    app: procure-erp
+    environment: production
+allowHostDirVolumePlugin: false
+allowHostIPC: false
+allowHostNetwork: false
+allowHostPID: false
+allowHostPorts: false
+allowPrivilegeEscalation: false
+allowPrivilegedContainer: false
+allowedCapabilities:
+- CHOWN
+- SETGID
+- SETUID
+defaultAddCapabilities: []
+fsGroup:
+  type: MustRunAs
+  ranges:
+  - min: 1000
+    max: 65535
+readOnlyRootFilesystem: true
+requiredDropCapabilities:
+- ALL
+runAsUser:
+  type: MustRunAsNonRoot
+seLinuxContext:
+  type: MustRunAs
+supplementalGroups:
+  type: MustRunAs
+  ranges:
+  - min: 1000
+    max: 65535
+volumes:
+- configMap
+- downwardAPI
+- emptyDir
+- persistentVolumeClaim
+- projected
+- secret
+users:
+- system:serviceaccount:procure-erp-prod:procure-erp-backend-sa
+- system:serviceaccount:procure-erp-prod:procure-erp-frontend-sa
+- system:serviceaccount:procure-erp-prod:procure-erp-nginx-sa
+
+---
+# Admission Controller Webhook Configuration
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionWebhook
+metadata:
+  name: procure-erp-security-webhook
+  labels:
+    app: procure-erp
+    component: security
+    environment: production
+webhooks:
+- name: security.procure-erp.com
+  clientConfig:
+    service:
+      name: procure-erp-security-webhook
+      namespace: procure-erp-prod
+      path: "/validate"
+  rules:
+  - operations: ["CREATE", "UPDATE"]
+    apiGroups: [""]
+    apiVersions: ["v1"]
+    resources: ["pods"]
+  - operations: ["CREATE", "UPDATE"]
+    apiGroups: ["apps"]
+    apiVersions: ["v1"]
+    resources: ["deployments", "replicasets"]
+  namespaceSelector:
+    matchLabels:
+      name: procure-erp-prod
+  admissionReviewVersions: ["v1", "v1beta1"]
+  sideEffects: None
+  failurePolicy: Fail

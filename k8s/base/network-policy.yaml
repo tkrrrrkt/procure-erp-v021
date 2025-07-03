@@ -1,0 +1,351 @@
+# ================================================
+# ProcureERP Network Policies
+# 企業級ネットワークセキュリティ設定
+# ================================================
+
+# Default Deny All Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: procure-erp-default-deny
+  namespace: procure-erp
+  labels:
+    app: procure-erp
+    type: security
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+
+---
+# Frontend Network Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: procure-erp-frontend-policy
+  namespace: procure-erp
+  labels:
+    app: procure-erp
+    component: frontend
+    type: security
+spec:
+  podSelector:
+    matchLabels:
+      app: procure-erp
+      component: frontend
+  
+  policyTypes:
+  - Ingress
+  - Egress
+  
+  ingress:
+  # Allow traffic from Nginx
+  - from:
+    - podSelector:
+        matchLabels:
+          app: procure-erp
+          component: nginx
+    ports:
+    - protocol: TCP
+      port: 3000
+  
+  # Allow traffic from Ingress Controller
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+    ports:
+    - protocol: TCP
+      port: 3000
+  
+  egress:
+  # Allow DNS
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  
+  # Allow HTTPS for external APIs
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+  
+  # Allow HTTP for external APIs
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 80
+  
+  # Allow communication to Backend
+  - to:
+    - podSelector:
+        matchLabels:
+          app: procure-erp
+          component: backend
+    ports:
+    - protocol: TCP
+      port: 3001
+
+---
+# Backend Network Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: procure-erp-backend-policy
+  namespace: procure-erp
+  labels:
+    app: procure-erp
+    component: backend
+    type: security
+spec:
+  podSelector:
+    matchLabels:
+      app: procure-erp
+      component: backend
+  
+  policyTypes:
+  - Ingress
+  - Egress
+  
+  ingress:
+  # Allow traffic from Frontend
+  - from:
+    - podSelector:
+        matchLabels:
+          app: procure-erp
+          component: frontend
+    ports:
+    - protocol: TCP
+      port: 3001
+  
+  # Allow traffic from Nginx
+  - from:
+    - podSelector:
+        matchLabels:
+          app: procure-erp
+          component: nginx
+    ports:
+    - protocol: TCP
+      port: 3001
+  
+  # Allow traffic from Ingress Controller
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+    ports:
+    - protocol: TCP
+      port: 3001
+  
+  # Allow metrics scraping
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 9090
+  
+  egress:
+  # Allow DNS
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  
+  # Allow HTTPS for external APIs
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+  
+  # Allow HTTP for external APIs
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 80
+  
+  # Allow communication to Database
+  - to:
+    - podSelector:
+        matchLabels:
+          app: procure-erp
+          component: postgres
+    ports:
+    - protocol: TCP
+      port: 5432
+  
+  # Allow communication to Redis
+  - to:
+    - podSelector:
+        matchLabels:
+          app: procure-erp
+          component: redis
+    ports:
+    - protocol: TCP
+      port: 6379
+
+---
+# Nginx Network Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: procure-erp-nginx-policy
+  namespace: procure-erp
+  labels:
+    app: procure-erp
+    component: nginx
+    type: security
+spec:
+  podSelector:
+    matchLabels:
+      app: procure-erp
+      component: nginx
+  
+  policyTypes:
+  - Ingress
+  - Egress
+  
+  ingress:
+  # Allow all HTTP/HTTPS traffic (public facing)
+  - from: []
+    ports:
+    - protocol: TCP
+      port: 80
+    - protocol: TCP
+      port: 443
+  
+  egress:
+  # Allow DNS
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  
+  # Allow communication to Frontend
+  - to:
+    - podSelector:
+        matchLabels:
+          app: procure-erp
+          component: frontend
+    ports:
+    - protocol: TCP
+      port: 3000
+  
+  # Allow communication to Backend
+  - to:
+    - podSelector:
+        matchLabels:
+          app: procure-erp
+          component: backend
+    ports:
+    - protocol: TCP
+      port: 3001
+
+---
+# Database Network Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: procure-erp-postgres-policy
+  namespace: procure-erp
+  labels:
+    app: procure-erp
+    component: postgres
+    type: security
+spec:
+  podSelector:
+    matchLabels:
+      app: procure-erp
+      component: postgres
+  
+  policyTypes:
+  - Ingress
+  - Egress
+  
+  ingress:
+  # Allow traffic from Backend only
+  - from:
+    - podSelector:
+        matchLabels:
+          app: procure-erp
+          component: backend
+    ports:
+    - protocol: TCP
+      port: 5432
+  
+  # Allow monitoring
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 9187
+  
+  egress:
+  # Allow DNS for replication/clustering
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+
+---
+# Redis Network Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: procure-erp-redis-policy
+  namespace: procure-erp
+  labels:
+    app: procure-erp
+    component: redis
+    type: security
+spec:
+  podSelector:
+    matchLabels:
+      app: procure-erp
+      component: redis
+  
+  policyTypes:
+  - Ingress
+  - Egress
+  
+  ingress:
+  # Allow traffic from Backend only
+  - from:
+    - podSelector:
+        matchLabels:
+          app: procure-erp
+          component: backend
+    ports:
+    - protocol: TCP
+      port: 6379
+  
+  # Allow monitoring
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 9121
+  
+  egress:
+  # Allow DNS for clustering
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53

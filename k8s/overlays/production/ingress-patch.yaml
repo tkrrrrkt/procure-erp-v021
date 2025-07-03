@@ -1,0 +1,132 @@
+# ================================================
+# ProcureERP Production Ingress Patches
+# 本番環境Ingress設定
+# ================================================
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: procure-erp-ingress
+  annotations:
+    # Production-specific annotations
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      add_header X-Environment "production" always;
+      add_header X-Frame-Options "SAMEORIGIN" always;
+      add_header X-Content-Type-Options "nosniff" always;
+      add_header X-XSS-Protection "1; mode=block" always;
+      add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+      add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()" always;
+    
+    # Strict rate limiting for production
+    nginx.ingress.kubernetes.io/rate-limit: "100"
+    nginx.ingress.kubernetes.io/rate-limit-window: "1m"
+    nginx.ingress.kubernetes.io/rate-limit-connections: "20"
+    nginx.ingress.kubernetes.io/rate-limit-rps: "10"
+    
+    # SSL configuration
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/ssl-protocols: "TLSv1.2 TLSv1.3"
+    nginx.ingress.kubernetes.io/ssl-ciphers: "ECDHE-RSA-AES128-GCM-SHA256,ECDHE-RSA-AES256-GCM-SHA384,ECDHE-RSA-AES128-SHA256,ECDHE-RSA-AES256-SHA384"
+    nginx.ingress.kubernetes.io/ssl-prefer-server-ciphers: "true"
+    
+    # CORS for production
+    nginx.ingress.kubernetes.io/cors-allow-origin: "https://procure-erp.com"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, PUT, DELETE, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization,X-CSRF-Token"
+    nginx.ingress.kubernetes.io/cors-expose-headers: "Content-Length,Content-Range"
+    nginx.ingress.kubernetes.io/cors-max-age: "86400"
+    nginx.ingress.kubernetes.io/cors-allow-credentials: "true"
+    
+    # Security headers
+    nginx.ingress.kubernetes.io/server-snippet: |
+      add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload" always;
+      add_header X-Frame-Options "SAMEORIGIN" always;
+      add_header X-Content-Type-Options "nosniff" always;
+      add_header X-XSS-Protection "1; mode=block" always;
+      add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+      add_header Content-Security-Policy "default-src 'self'; script-src 'self' procure-erp.jp.auth0.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' procure-erp.jp.auth0.com https://api.procure-erp.com; frame-src procure-erp.jp.auth0.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none';" always;
+      add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()" always;
+    
+    # External DNS for production
+    external-dns.alpha.kubernetes.io/hostname: "procure-erp.com,api.procure-erp.com,www.procure-erp.com"
+    external-dns.alpha.kubernetes.io/ttl: "300"
+    
+    # Load balancer annotations (AWS)
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "tcp"
+    service.beta.kubernetes.io/aws-load-balancer-ssl-cert: "arn:aws:acm:us-west-2:123456789012:certificate/prod-cert-id"
+    service.beta.kubernetes.io/aws-load-balancer-ssl-ports: "https"
+    service.beta.kubernetes.io/aws-load-balancer-connection-draining-enabled: "true"
+    service.beta.kubernetes.io/aws-load-balancer-connection-draining-timeout: "60"
+    
+    # Monitoring and logging
+    nginx.ingress.kubernetes.io/enable-access-log: "true"
+    nginx.ingress.kubernetes.io/access-log-path: "/var/log/nginx/prod-access.log"
+    nginx.ingress.kubernetes.io/error-log-path: "/var/log/nginx/prod-error.log"
+    nginx.ingress.kubernetes.io/log-format-escape-json: "true"
+    nginx.ingress.kubernetes.io/log-format-upstream: '{"timestamp":"$time_iso8601","remote_addr":"$remote_addr","x_forwarded_for":"$http_x_forwarded_for","request_id":"$req_id","remote_user":"$remote_user","bytes_sent":$bytes_sent,"request_time":$request_time,"status":$status,"vhost":"$host","request_proto":"$server_protocol","path":"$uri","request_query":"$args","request_length":$request_length,"duration":$request_time,"method":"$request_method","http_referrer":"$http_referer","http_user_agent":"$http_user_agent","upstream_addr":"$upstream_addr","upstream_status":"$upstream_status","upstream_response_time":"$upstream_response_time","upstream_response_length":"$upstream_response_length"}'
+    
+    # WAF integration
+    nginx.ingress.kubernetes.io/modsecurity-transaction-id: "$request_id"
+    nginx.ingress.kubernetes.io/modsecurity-snippet: |
+      SecRuleEngine On
+      SecRule REQUEST_HEADERS:User-Agent "@contains sqlmap" "id:1001,phase:1,deny,msg:'SQL Injection Attack'"
+      SecRule REQUEST_HEADERS:User-Agent "@contains nikto" "id:1002,phase:1,deny,msg:'Vulnerability Scanner'"
+      SecRule ARGS "@detectSQLi" "id:1003,phase:2,deny,msg:'SQL Injection Attack'"
+      SecRule ARGS "@detectXSS" "id:1004,phase:2,deny,msg:'XSS Attack'"
+    
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - procure-erp.com
+    - www.procure-erp.com
+    - api.procure-erp.com
+    secretName: procure-erp-prod-tls
+  
+  rules:
+  # Main production domain
+  - host: procure-erp.com
+    http:
+      paths:
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: procure-erp-backend-prod
+            port:
+              number: 80
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: procure-erp-frontend-prod
+            port:
+              number: 80
+  
+  # WWW redirect for production
+  - host: www.procure-erp.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: procure-erp-frontend-prod
+            port:
+              number: 80
+  
+  # API subdomain for production
+  - host: api.procure-erp.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: procure-erp-backend-prod
+            port:
+              number: 80

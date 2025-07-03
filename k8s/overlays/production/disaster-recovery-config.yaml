@@ -1,0 +1,481 @@
+# ================================================
+# ProcureERP Production Disaster Recovery Configuration
+# 本番環境災害対策・復旧・事業継続設定
+# ================================================
+
+# Disaster Recovery Backup Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: disaster-recovery-config
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp
+    component: disaster-recovery
+    environment: production
+data:
+  backup-schedule.yaml: |
+    # Primary Backup Schedule
+    database_backup:
+      full_backup: "0 2 * * *"        # Daily at 2 AM
+      incremental_backup: "0 */6 * * *"  # Every 6 hours
+      transaction_log_backup: "*/15 * * * *"  # Every 15 minutes
+      retention_days: 30
+      compression: true
+      encryption: true
+    
+    application_backup:
+      config_backup: "0 3 * * *"       # Daily at 3 AM
+      secrets_backup: "0 4 * * *"      # Daily at 4 AM
+      retention_days: 90
+      encryption: true
+    
+    monitoring_backup:
+      metrics_backup: "0 5 * * 0"      # Weekly on Sunday at 5 AM
+      logs_backup: "0 1 * * *"         # Daily at 1 AM
+      retention_days: 365
+      compression: true
+
+  recovery-procedures.yaml: |
+    # Recovery Time Objectives (RTO) and Recovery Point Objectives (RPO)
+    objectives:
+      database:
+        rto: "4 hours"
+        rpo: "15 minutes"
+      application:
+        rto: "2 hours"
+        rpo: "1 hour"
+      full_system:
+        rto: "8 hours"
+        rpo: "1 hour"
+    
+    # Recovery Procedures
+    procedures:
+      database_recovery:
+        point_in_time: true
+        cross_region: true
+        automated: true
+      application_recovery:
+        blue_green_deployment: true
+        rollback_capability: true
+        automated: true
+      infrastructure_recovery:
+        infrastructure_as_code: true
+        multi_region: true
+        automated: false
+
+  disaster-scenarios.yaml: |
+    scenarios:
+      - name: "database_corruption"
+        severity: "high"
+        estimated_rto: "4 hours"
+        estimated_rpo: "15 minutes"
+        recovery_steps:
+          - "Stop application traffic"
+          - "Assess corruption extent"
+          - "Restore from last known good backup"
+          - "Apply transaction logs"
+          - "Validate data integrity"
+          - "Resume application traffic"
+      
+      - name: "application_failure"
+        severity: "medium"
+        estimated_rto: "2 hours"
+        estimated_rpo: "0 minutes"
+        recovery_steps:
+          - "Identify failed components"
+          - "Deploy to standby environment"
+          - "Redirect traffic"
+          - "Validate functionality"
+          - "Fix primary environment"
+      
+      - name: "infrastructure_failure"
+        severity: "critical"
+        estimated_rto: "8 hours"
+        estimated_rpo: "1 hour"
+        recovery_steps:
+          - "Activate disaster recovery site"
+          - "Restore infrastructure"
+          - "Restore application data"
+          - "Validate system integrity"
+          - "Update DNS routing"
+          - "Monitor system stability"
+
+---
+# Cross-Region Backup CronJob
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cross-region-backup
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp
+    component: disaster-recovery
+    environment: production
+spec:
+  schedule: "0 6 * * *"  # Daily at 6 AM
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: procure-erp-backup
+            component: disaster-recovery
+        spec:
+          serviceAccountName: procure-erp-backup
+          containers:
+          - name: cross-region-backup
+            image: amazon/aws-cli:2.13.0
+            command:
+            - /bin/bash
+            - -c
+            - |
+              set -e
+              echo "Starting cross-region backup..."
+              
+              # Database backup
+              echo "Backing up database..."
+              kubectl exec -n procure-erp-prod deployment/procure-erp-postgres -- \
+                pg_dump -h localhost -U procure_erp_user -d procure_erp_prod \
+                --format=custom --compress=9 --verbose \
+                --file=/tmp/db_backup_$(date +%Y%m%d_%H%M%S).dump
+              
+              # Upload to S3 cross-region
+              aws s3 cp /tmp/db_backup_*.dump \
+                s3://procure-erp-dr-backup-us-east-1/database/ \
+                --storage-class STANDARD_IA
+              
+              # Configuration backup
+              echo "Backing up configurations..."
+              kubectl get configmaps,secrets -n procure-erp-prod -o yaml > /tmp/config_backup_$(date +%Y%m%d_%H%M%S).yaml
+              
+              aws s3 cp /tmp/config_backup_*.yaml \
+                s3://procure-erp-dr-backup-us-east-1/configs/ \
+                --storage-class STANDARD_IA
+              
+              # PVC backup (if using EBS)
+              echo "Creating PVC snapshots..."
+              kubectl get pvc -n procure-erp-prod -o jsonpath='{.items[*].spec.volumeName}' | \
+              xargs -I {} aws ec2 create-snapshot \
+                --volume-id {} \
+                --description "ProcureERP DR Backup $(date +%Y-%m-%d)"
+              
+              echo "Cross-region backup completed successfully"
+            env:
+            - name: AWS_DEFAULT_REGION
+              value: "us-west-2"
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: password
+            resources:
+              limits:
+                memory: "1Gi"
+                cpu: "500m"
+              requests:
+                memory: "512Mi"
+                cpu: "250m"
+            volumeMounts:
+            - name: aws-credentials
+              mountPath: /root/.aws
+              readOnly: true
+          volumes:
+          - name: aws-credentials
+            secret:
+              secretName: aws-credentials
+          restartPolicy: OnFailure
+
+---
+# Disaster Recovery Service Account and RBAC
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: procure-erp-disaster-recovery
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp
+    component: disaster-recovery
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/ProcureERP-DisasterRecovery-Role
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: procure-erp-disaster-recovery
+  labels:
+    app: procure-erp
+    component: disaster-recovery
+rules:
+- apiGroups: [""]
+  resources: ["pods", "pods/exec", "configmaps", "secrets", "persistentvolumeclaims", "persistentvolumes"]
+  verbs: ["get", "list", "create", "delete", "patch"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "statefulsets"]
+  verbs: ["get", "list", "patch", "update"]
+- apiGroups: ["batch"]
+  resources: ["jobs", "cronjobs"]
+  verbs: ["get", "list", "create", "delete"]
+- apiGroups: ["snapshot.storage.k8s.io"]
+  resources: ["volumesnapshots", "volumesnapshotcontents"]
+  verbs: ["get", "list", "create", "delete"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: procure-erp-disaster-recovery
+  labels:
+    app: procure-erp
+    component: disaster-recovery
+subjects:
+- kind: ServiceAccount
+  name: procure-erp-disaster-recovery
+  namespace: procure-erp-prod
+roleRef:
+  kind: ClusterRole
+  name: procure-erp-disaster-recovery
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Volume Snapshot Class for Backup
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotClass
+metadata:
+  name: procure-erp-snapshot-class
+  labels:
+    app: procure-erp
+    component: disaster-recovery
+driver: ebs.csi.aws.com
+deletionPolicy: Retain
+parameters:
+  tagSpecification_1: "Name=ProcureERP-DR-Snapshot"
+  tagSpecification_2: "Environment=production"
+  tagSpecification_3: "BackupType=disaster-recovery"
+
+---
+# Automated Volume Snapshot CronJob
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: volume-snapshot-backup
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp
+    component: disaster-recovery
+spec:
+  schedule: "0 */12 * * *"  # Every 12 hours
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 5
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: procure-erp-snapshot
+            component: disaster-recovery
+        spec:
+          serviceAccountName: procure-erp-disaster-recovery
+          containers:
+          - name: volume-snapshot
+            image: bitnami/kubectl:1.28
+            command:
+            - /bin/bash
+            - -c
+            - |
+              set -e
+              echo "Creating volume snapshots for disaster recovery..."
+              
+              # Get all PVCs in the namespace
+              PVCs=$(kubectl get pvc -n procure-erp-prod -o jsonpath='{.items[*].metadata.name}')
+              
+              for pvc in $PVCs; do
+                echo "Creating snapshot for PVC: $pvc"
+                
+                # Create VolumeSnapshot
+                cat <<EOF | kubectl apply -f -
+              apiVersion: snapshot.storage.k8s.io/v1
+              kind: VolumeSnapshot
+              metadata:
+                name: ${pvc}-snapshot-$(date +%Y%m%d-%H%M%S)
+                namespace: procure-erp-prod
+                labels:
+                  app: procure-erp
+                  component: disaster-recovery
+                  source-pvc: ${pvc}
+              spec:
+                volumeSnapshotClassName: procure-erp-snapshot-class
+                source:
+                  persistentVolumeClaimName: ${pvc}
+              EOF
+                
+                echo "Snapshot created for $pvc"
+              done
+              
+              # Clean up old snapshots (keep last 10)
+              echo "Cleaning up old snapshots..."
+              kubectl get volumesnapshots -n procure-erp-prod \
+                --sort-by=.metadata.creationTimestamp \
+                -o jsonpath='{.items[*].metadata.name}' | \
+                tr ' ' '\n' | head -n -10 | \
+                xargs -I {} kubectl delete volumesnapshot {} -n procure-erp-prod || true
+              
+              echo "Volume snapshot backup completed"
+            resources:
+              limits:
+                memory: "128Mi"
+                cpu: "100m"
+              requests:
+                memory: "64Mi"
+                cpu: "50m"
+          restartPolicy: OnFailure
+
+---
+# Disaster Recovery Monitoring
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: disaster-recovery-alerts
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp
+    component: disaster-recovery
+spec:
+  groups:
+  - name: disaster-recovery
+    rules:
+    - alert: BackupJobFailed
+      expr: kube_job_status_failed{job_name=~".*backup.*", namespace="procure-erp-prod"} > 0
+      for: 1m
+      labels:
+        severity: critical
+        component: backup
+      annotations:
+        summary: "Backup job failed"
+        description: "Backup job {{ $labels.job_name }} has failed"
+
+    - alert: BackupJobMissing
+      expr: time() - max(kube_job_status_completion_time{job_name=~".*backup.*", namespace="procure-erp-prod"}) > 86400
+      for: 1h
+      labels:
+        severity: warning
+        component: backup
+      annotations:
+        summary: "Backup job missing"
+        description: "No backup job has completed in the last 24 hours"
+
+    - alert: SnapshotCreationFailed
+      expr: increase(volume_snapshot_creation_failures_total[1h]) > 0
+      for: 5m
+      labels:
+        severity: critical
+        component: snapshot
+      annotations:
+        summary: "Volume snapshot creation failed"
+        description: "Volume snapshot creation has failed {{ $value }} times in the last hour"
+
+    - alert: CrossRegionReplicationLag
+      expr: time() - max(last_cross_region_backup_timestamp) > 172800  # 48 hours
+      for: 1h
+      labels:
+        severity: warning
+        component: replication
+      annotations:
+        summary: "Cross-region replication lag"
+        description: "Cross-region backup is lagging behind by more than 48 hours"
+
+    - alert: DisasterRecoveryStorageSpace
+      expr: node_filesystem_avail_bytes{mountpoint="/backup"} / node_filesystem_size_bytes{mountpoint="/backup"} < 0.1
+      for: 10m
+      labels:
+        severity: critical
+        component: storage
+      annotations:
+        summary: "Low disaster recovery storage space"
+        description: "Disaster recovery storage space is below 10%"
+
+---
+# Emergency Contact Information
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: emergency-contacts
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp
+    component: disaster-recovery
+data:
+  contacts.yaml: |
+    primary_contacts:
+      - name: "IT Operations Manager"
+        role: "Primary Contact"
+        phone: "+1-555-0101"
+        email: "it-ops@procure-erp.com"
+        escalation_time: "immediate"
+      
+      - name: "Database Administrator"
+        role: "Database Expert"
+        phone: "+1-555-0102"
+        email: "dba@procure-erp.com"
+        escalation_time: "15 minutes"
+      
+      - name: "DevOps Lead"
+        role: "Infrastructure Expert"
+        phone: "+1-555-0103"
+        email: "devops@procure-erp.com"
+        escalation_time: "15 minutes"
+    
+    secondary_contacts:
+      - name: "CTO"
+        role: "Executive Escalation"
+        phone: "+1-555-0201"
+        email: "cto@procure-erp.com"
+        escalation_time: "1 hour"
+      
+      - name: "VP Engineering"
+        role: "Engineering Escalation"
+        phone: "+1-555-0202"
+        email: "vp-eng@procure-erp.com"
+        escalation_time: "1 hour"
+    
+    external_contacts:
+      - name: "AWS Support"
+        role: "Cloud Provider"
+        phone: "+1-555-AWS-SUPPORT"
+        case_priority: "critical"
+        support_plan: "enterprise"
+      
+      - name: "Disaster Recovery Vendor"
+        role: "DR Service Provider"
+        phone: "+1-555-DR-SUPPORT"
+        contract_id: "DR-PROC-2024-001"
+
+  communication_plan.yaml: |
+    notification_channels:
+      - type: "pagerduty"
+        service_key: "PAGERDUTY_SERVICE_KEY"
+        escalation_policy: "procure-erp-critical"
+      
+      - type: "slack"
+        webhook_url: "SLACK_WEBHOOK_URL"
+        channel: "#procure-erp-alerts"
+      
+      - type: "email"
+        smtp_server: "smtp.procure-erp.com"
+        distribution_list: "emergency@procure-erp.com"
+      
+      - type: "sms"
+        provider: "twilio"
+        account_sid: "TWILIO_ACCOUNT_SID"
+        auth_token: "TWILIO_AUTH_TOKEN"
+    
+    escalation_matrix:
+      level1: "0-15 minutes"
+      level2: "15-60 minutes"
+      level3: "1-4 hours"
+      executive: "4+ hours"

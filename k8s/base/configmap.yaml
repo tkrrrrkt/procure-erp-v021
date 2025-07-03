@@ -1,0 +1,86 @@
+# ================================================
+# ProcureERP Kubernetes ConfigMap
+# 企業級設定管理
+# ================================================
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: procure-erp-config
+  namespace: procure-erp
+  labels:
+    app: procure-erp
+    component: config
+data:
+  # Application Configuration
+  NODE_ENV: "production"
+  APP_NAME: "ProcureERP"
+  APP_VERSION: "1.0.0"
+  API_PREFIX: "api"
+  API_VERSION: "v1"
+  TZ: "Asia/Tokyo"
+  
+  # Database Configuration
+  DB_CONNECTION_LIMIT: "50"
+  DB_POOL_TIMEOUT: "60000"
+  DB_IDLE_TIMEOUT: "20000"
+  DB_MAX_LIFETIME: "1800000"
+  
+  # Redis Configuration
+  REDIS_DB: "0"
+  REDIS_CONNECT_TIMEOUT: "10000"
+  REDIS_COMMAND_TIMEOUT: "5000"
+  REDIS_RETRY_ATTEMPTS: "5"
+  
+  # JWT Configuration
+  JWT_EXPIRES_IN: "1h"
+  JWT_REFRESH_EXPIRES_IN: "7d"
+  JWT_ALGORITHM: "HS256"
+  
+  # Security Configuration
+  CSRF_ENABLED: "true"
+  RATE_LIMIT_ENABLED: "true"
+  RATE_LIMIT_WINDOW_MS: "900000"
+  RATE_LIMIT_MAX_REQUESTS: "100"
+  CSP_ENABLED: "true"
+  CSP_REPORT_ONLY: "false"
+  CSP_ENFORCE_HTTPS: "true"
+  SECURITY_HEADERS_ENABLED: "true"
+  HSTS_MAX_AGE: "31536000"
+  HSTS_INCLUDE_SUBDOMAINS: "true"
+  HSTS_PRELOAD: "true"
+  
+  # File Upload Configuration
+  UPLOAD_DIRECTORY: "/app/uploads"
+  UPLOAD_MAX_SIZE: "20971520"
+  UPLOAD_ALLOWED_TYPES: "image/jpeg,image/png,image/gif,application/pdf,text/csv"
+  
+  # Logging Configuration
+  LOG_LEVEL: "info"
+  LOG_FORMAT: "json"
+  LOG_TIMESTAMP: "true"
+  LOG_COLORIZE: "false"
+  LOG_FILE_ENABLED: "true"
+  LOG_FILE_LEVEL: "error"
+  LOG_FILE_PATH: "/app/logs/app.log"
+  LOG_FILE_MAX_SIZE: "10m"
+  LOG_FILE_MAX_FILES: "5"
+  
+  # Health Check Configuration
+  HEALTH_CHECK_ENABLED: "true"
+  HEALTH_CHECK_ENDPOINT: "/health"
+  
+  # Performance Configuration
+  COMPRESSION_ENABLED: "true"
+  COMPRESSION_LEVEL: "6"
+  COMPRESSION_THRESHOLD: "1024"
+  REQUEST_SIZE_LIMIT: "10mb"
+  REQUEST_TIMEOUT: "30000"
+  KEEPALIVE_TIMEOUT: "5000"
+  
+  # Feature Flags
+  FEATURE_USER_REGISTRATION: "true"
+  FEATURE_PASSWORD_RESET: "true"
+  FEATURE_EMAIL_VERIFICATION: "true"
+  FEATURE_TWO_FACTOR_AUTH: "false"
+  FEATURE_AUDIT_LOGGING: "true"

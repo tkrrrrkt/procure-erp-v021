@@ -1,0 +1,391 @@
+# ================================================
+# ProcureERP Production Monitoring Configuration
+# 本番環境監視設定
+# ================================================
+
+# ServiceMonitor for Prometheus Operator
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: procure-erp-backend-monitor
+  labels:
+    app: procure-erp-backend
+    environment: production
+    monitoring: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: procure-erp-backend
+      environment: production
+  endpoints:
+  - port: metrics
+    interval: 30s
+    path: /metrics
+    scrapeTimeout: 10s
+    metricRelabelings:
+    - sourceLabels: [__name__]
+      regex: 'go_.*'
+      action: drop
+    - sourceLabels: [__name__]
+      regex: 'nodejs_.*'
+      action: keep
+    - sourceLabels: [__name__]
+      regex: 'http_requests_total'
+      action: keep
+
+---
+# ServiceMonitor for Frontend
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: procure-erp-frontend-monitor
+  labels:
+    app: procure-erp-frontend
+    environment: production
+spec:
+  selector:
+    matchLabels:
+      app: procure-erp-frontend
+      environment: production
+  endpoints:
+  - port: http
+    interval: 30s
+    path: /api/metrics
+    scrapeTimeout: 10s
+
+---
+# ServiceMonitor for Nginx
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: procure-erp-nginx-monitor
+  labels:
+    app: procure-erp-nginx
+    environment: production
+spec:
+  selector:
+    matchLabels:
+      app: procure-erp-nginx
+      environment: production
+  endpoints:
+  - port: metrics
+    interval: 15s
+    path: /metrics
+    scrapeTimeout: 10s
+
+---
+# ServiceMonitor for PostgreSQL
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: procure-erp-postgres-monitor
+  labels:
+    app: procure-erp-postgres
+    environment: production
+spec:
+  selector:
+    matchLabels:
+      app: procure-erp-postgres
+      environment: production
+  endpoints:
+  - port: metrics
+    interval: 30s
+    path: /metrics
+    scrapeTimeout: 10s
+    metricRelabelings:
+    - sourceLabels: [__name__]
+      regex: 'pg_stat_database_.*'
+      action: keep
+    - sourceLabels: [__name__]
+      regex: 'pg_locks_count'
+      action: keep
+
+---
+# ServiceMonitor for Redis
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: procure-erp-redis-monitor
+  labels:
+    app: procure-erp-redis
+    environment: production
+spec:
+  selector:
+    matchLabels:
+      app: procure-erp-redis
+      environment: production
+  endpoints:
+  - port: metrics
+    interval: 30s
+    path: /metrics
+    scrapeTimeout: 10s
+
+---
+# PrometheusRule for ProcureERP Alerts
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: procure-erp-alerts
+  labels:
+    app: procure-erp
+    environment: production
+    prometheus: kube-prometheus
+    role: alert-rules
+spec:
+  groups:
+  - name: procure-erp.backend
+    rules:
+    - alert: BackendHighErrorRate
+      expr: |
+        (
+          rate(http_requests_total{app="procure-erp-backend",status=~"5.."}[5m]) /
+          rate(http_requests_total{app="procure-erp-backend"}[5m])
+        ) > 0.05
+      for: 5m
+      labels:
+        severity: critical
+        service: backend
+      annotations:
+        summary: "High error rate in ProcureERP Backend"
+        description: "Backend error rate is {{ $value | humanizePercentage }} for the last 5 minutes"
+    
+    - alert: BackendHighLatency
+      expr: |
+        histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{app="procure-erp-backend"}[5m])) > 2
+      for: 5m
+      labels:
+        severity: warning
+        service: backend
+      annotations:
+        summary: "High latency in ProcureERP Backend"
+        description: "95th percentile latency is {{ $value }}s"
+    
+    - alert: BackendPodRestart
+      expr: |
+        increase(kube_pod_container_status_restarts_total{pod=~"procure-erp-backend-.*"}[1h]) > 3
+      for: 0m
+      labels:
+        severity: critical
+        service: backend
+      annotations:
+        summary: "Backend pod restarting frequently"
+        description: "Pod {{ $labels.pod }} has restarted {{ $value }} times in the last hour"
+
+  - name: procure-erp.database
+    rules:
+    - alert: PostgreSQLDown
+      expr: |
+        pg_up{app="procure-erp-postgres"} == 0
+      for: 5m
+      labels:
+        severity: critical
+        service: database
+      annotations:
+        summary: "PostgreSQL is down"
+        description: "PostgreSQL instance {{ $labels.instance }} is down"
+    
+    - alert: PostgreSQLTooManyConnections
+      expr: |
+        pg_stat_database_numbackends{app="procure-erp-postgres"} / pg_settings_max_connections{app="procure-erp-postgres"} > 0.8
+      for: 5m
+      labels:
+        severity: warning
+        service: database
+      annotations:
+        summary: "PostgreSQL has too many connections"
+        description: "PostgreSQL connection usage is {{ $value | humanizePercentage }}"
+    
+    - alert: PostgreSQLSlowQueries
+      expr: |
+        rate(pg_stat_activity_max_tx_duration{app="procure-erp-postgres"}[5m]) > 300
+      for: 5m
+      labels:
+        severity: warning
+        service: database
+      annotations:
+        summary: "PostgreSQL has slow queries"
+        description: "Slow query duration: {{ $value }}s"
+
+  - name: procure-erp.redis
+    rules:
+    - alert: RedisDown
+      expr: |
+        redis_up{app="procure-erp-redis"} == 0
+      for: 5m
+      labels:
+        severity: critical
+        service: cache
+      annotations:
+        summary: "Redis is down"
+        description: "Redis instance {{ $labels.instance }} is down"
+    
+    - alert: RedisHighMemoryUsage
+      expr: |
+        redis_memory_used_bytes{app="procure-erp-redis"} / redis_memory_max_bytes{app="procure-erp-redis"} > 0.9
+      for: 5m
+      labels:
+        severity: warning
+        service: cache
+      annotations:
+        summary: "Redis memory usage is high"
+        description: "Redis memory usage is {{ $value | humanizePercentage }}"
+
+  - name: procure-erp.ingress
+    rules:
+    - alert: IngressHighLatency
+      expr: |
+        histogram_quantile(0.95, rate(nginx_ingress_controller_request_duration_seconds_bucket{ingress="procure-erp-ingress"}[5m])) > 3
+      for: 5m
+      labels:
+        severity: warning
+        service: ingress
+      annotations:
+        summary: "High ingress latency"
+        description: "95th percentile latency is {{ $value }}s"
+    
+    - alert: IngressHighErrorRate
+      expr: |
+        rate(nginx_ingress_controller_requests{ingress="procure-erp-ingress",status=~"5.."}[5m]) / rate(nginx_ingress_controller_requests{ingress="procure-erp-ingress"}[5m]) > 0.05
+      for: 5m
+      labels:
+        severity: critical
+        service: ingress
+      annotations:
+        summary: "High error rate at ingress"
+        description: "Error rate is {{ $value | humanizePercentage }}"
+
+---
+# Grafana Dashboard ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: procure-erp-dashboard
+  labels:
+    grafana_dashboard: "1"
+    app: procure-erp
+    environment: production
+data:
+  procure-erp-overview.json: |
+    {
+      "dashboard": {
+        "id": null,
+        "title": "ProcureERP Production Overview",
+        "tags": ["procure-erp", "production"],
+        "style": "dark",
+        "timezone": "browser",
+        "panels": [
+          {
+            "id": 1,
+            "title": "Request Rate",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "rate(http_requests_total{app=\"procure-erp-backend\"}[5m])",
+                "legendFormat": "Backend RPS"
+              },
+              {
+                "expr": "rate(nginx_ingress_controller_requests{ingress=\"procure-erp-ingress\"}[5m])",
+                "legendFormat": "Ingress RPS"
+              }
+            ],
+            "yAxes": [
+              {
+                "label": "Requests/sec"
+              }
+            ],
+            "xAxes": [
+              {
+                "mode": "time"
+              }
+            ],
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 0,
+              "y": 0
+            }
+          },
+          {
+            "id": 2,
+            "title": "Error Rate",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "rate(http_requests_total{app=\"procure-erp-backend\",status=~\"5..\"}[5m]) / rate(http_requests_total{app=\"procure-erp-backend\"}[5m])",
+                "legendFormat": "Backend Error Rate"
+              }
+            ],
+            "yAxes": [
+              {
+                "label": "Error Rate",
+                "max": 1,
+                "min": 0
+              }
+            ],
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 12,
+              "y": 0
+            }
+          },
+          {
+            "id": 3,
+            "title": "Response Time",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{app=\"procure-erp-backend\"}[5m]))",
+                "legendFormat": "95th Percentile"
+              },
+              {
+                "expr": "histogram_quantile(0.50, rate(http_request_duration_seconds_bucket{app=\"procure-erp-backend\"}[5m]))",
+                "legendFormat": "50th Percentile"
+              }
+            ],
+            "yAxes": [
+              {
+                "label": "Response Time (s)"
+              }
+            ],
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 0,
+              "y": 8
+            }
+          },
+          {
+            "id": 4,
+            "title": "Database Connections",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "pg_stat_database_numbackends{app=\"procure-erp-postgres\"}",
+                "legendFormat": "Active Connections"
+              },
+              {
+                "expr": "pg_settings_max_connections{app=\"procure-erp-postgres\"}",
+                "legendFormat": "Max Connections"
+              }
+            ],
+            "yAxes": [
+              {
+                "label": "Connections"
+              }
+            ],
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 12,
+              "y": 8
+            }
+          }
+        ],
+        "time": {
+          "from": "now-1h",
+          "to": "now"
+        },
+        "refresh": "5s"
+      }
+    }

@@ -1,0 +1,103 @@
+# ================================================
+# ProcureERP Persistent Volume Claims
+# 企業級永続ストレージ設定
+# ================================================
+
+# Uploads PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: procure-erp-uploads-pvc
+  namespace: procure-erp
+  labels:
+    app: procure-erp
+    component: storage
+    type: uploads
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 100Gi
+  storageClassName: fast-ssd
+  volumeMode: Filesystem
+
+---
+# Database PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: procure-erp-postgres-pvc
+  namespace: procure-erp
+  labels:
+    app: procure-erp
+    component: database
+    type: data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 500Gi
+  storageClassName: high-performance-ssd
+  volumeMode: Filesystem
+
+---
+# Redis PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: procure-erp-redis-pvc
+  namespace: procure-erp
+  labels:
+    app: procure-erp
+    component: cache
+    type: data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+  storageClassName: fast-ssd
+  volumeMode: Filesystem
+
+---
+# Logs PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: procure-erp-logs-pvc
+  namespace: procure-erp
+  labels:
+    app: procure-erp
+    component: logging
+    type: logs
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 200Gi
+  storageClassName: standard-ssd
+  volumeMode: Filesystem
+
+---
+# Backup PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: procure-erp-backup-pvc
+  namespace: procure-erp
+  labels:
+    app: procure-erp
+    component: backup
+    type: backup
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 1Ti
+  storageClassName: backup-storage
+  volumeMode: Filesystem

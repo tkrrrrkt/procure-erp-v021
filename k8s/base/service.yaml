@@ -1,0 +1,149 @@
+# ================================================
+# ProcureERP Kubernetes Services
+# 企業級サービス定義
+# ================================================
+
+# Backend Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: procure-erp-backend
+  namespace: procure-erp
+  labels:
+    app: procure-erp
+    component: backend
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9090"
+    prometheus.io/path: "/metrics"
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 3001
+    targetPort: http
+    protocol: TCP
+  - name: metrics
+    port: 9090
+    targetPort: metrics
+    protocol: TCP
+  selector:
+    app: procure-erp
+    component: backend
+
+---
+# Frontend Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: procure-erp-frontend
+  namespace: procure-erp
+  labels:
+    app: procure-erp
+    component: frontend
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 3000
+    targetPort: http
+    protocol: TCP
+  selector:
+    app: procure-erp
+    component: frontend
+
+---
+# Nginx Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: procure-erp-nginx
+  namespace: procure-erp
+  labels:
+    app: procure-erp
+    component: nginx
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+    external-dns.alpha.kubernetes.io/hostname: "procure-erp.com"
+spec:
+  type: LoadBalancer
+  ports:
+  - name: http
+    port: 80
+    targetPort: http
+    protocol: TCP
+  - name: https
+    port: 443
+    targetPort: https
+    protocol: TCP
+  selector:
+    app: procure-erp
+    component: nginx
+  sessionAffinity: None
+
+---
+# PostgreSQL Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: procure-erp
+  labels:
+    app: procure-erp
+    component: database
+spec:
+  type: ClusterIP
+  ports:
+  - name: postgres
+    port: 5432
+    targetPort: 5432
+    protocol: TCP
+  selector:
+    app: procure-erp
+    component: postgres
+
+---
+# Redis Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: procure-erp
+  labels:
+    app: procure-erp
+    component: cache
+spec:
+  type: ClusterIP
+  ports:
+  - name: redis
+    port: 6379
+    targetPort: 6379
+    protocol: TCP
+  selector:
+    app: procure-erp
+    component: redis
+
+---
+# Headless Service for Database Clustering
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-headless
+  namespace: procure-erp
+  labels:
+    app: procure-erp
+    component: database
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+  - name: postgres
+    port: 5432
+    targetPort: 5432
+    protocol: TCP
+  selector:
+    app: procure-erp
+    component: postgres

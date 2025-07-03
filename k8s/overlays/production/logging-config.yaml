@@ -1,0 +1,486 @@
+# ================================================
+# ProcureERP Production Logging Configuration
+# 本番環境ログ設定・集約・監視
+# ================================================
+
+# Fluent Bit DaemonSet for Log Collection
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: fluent-bit
+  namespace: procure-erp-prod
+  labels:
+    app: fluent-bit
+    environment: production
+    component: logging
+spec:
+  selector:
+    matchLabels:
+      app: fluent-bit
+  template:
+    metadata:
+      labels:
+        app: fluent-bit
+        environment: production
+    spec:
+      serviceAccountName: fluent-bit
+      containers:
+      - name: fluent-bit
+        image: fluent/fluent-bit:2.2.0
+        ports:
+        - containerPort: 2020
+          name: http
+        - containerPort: 24224
+          name: forward
+        resources:
+          limits:
+            memory: "200Mi"
+            cpu: "200m"
+          requests:
+            memory: "100Mi"
+            cpu: "100m"
+        volumeMounts:
+        - name: varlog
+          mountPath: /var/log
+        - name: varlibdockercontainers
+          mountPath: /var/lib/docker/containers
+          readOnly: true
+        - name: fluent-bit-config
+          mountPath: /fluent-bit/etc/
+        - name: systemd-journal
+          mountPath: /run/log/journal
+          readOnly: true
+        env:
+        - name: FLUENT_ELASTICSEARCH_HOST
+          value: "elasticsearch.logging.svc.cluster.local"
+        - name: FLUENT_ELASTICSEARCH_PORT
+          value: "9200"
+        - name: FLUENT_ELASTICSEARCH_USER
+          valueFrom:
+            secretKeyRef:
+              name: elasticsearch-credentials
+              key: username
+        - name: FLUENT_ELASTICSEARCH_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: elasticsearch-credentials
+              key: password
+      volumes:
+      - name: varlog
+        hostPath:
+          path: /var/log
+      - name: varlibdockercontainers
+        hostPath:
+          path: /var/lib/docker/containers
+      - name: systemd-journal
+        hostPath:
+          path: /run/log/journal
+      - name: fluent-bit-config
+        configMap:
+          name: fluent-bit-config
+      tolerations:
+      - key: node-role.kubernetes.io/control-plane
+        effect: NoSchedule
+      - key: node-role.kubernetes.io/master
+        effect: NoSchedule
+
+---
+# Fluent Bit Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluent-bit-config
+  namespace: procure-erp-prod
+  labels:
+    app: fluent-bit
+    environment: production
+data:
+  fluent-bit.conf: |
+    [SERVICE]
+        Flush         5
+        Log_Level     info
+        Daemon        off
+        Parsers_File  parsers.conf
+        HTTP_Server   On
+        HTTP_Listen   0.0.0.0
+        HTTP_Port     2020
+        Health_Check  On
+
+    [INPUT]
+        Name              tail
+        Path              /var/log/containers/procure-erp-backend*.log
+        multiline.parser  docker, cri
+        Tag               kube.backend.*
+        Mem_Buf_Limit     50MB
+        Skip_Long_Lines   On
+
+    [INPUT]
+        Name              tail
+        Path              /var/log/containers/procure-erp-frontend*.log
+        multiline.parser  docker, cri
+        Tag               kube.frontend.*
+        Mem_Buf_Limit     50MB
+        Skip_Long_Lines   On
+
+    [INPUT]
+        Name              tail
+        Path              /var/log/containers/procure-erp-postgres*.log
+        multiline.parser  docker, cri
+        Tag               kube.postgres.*
+        Mem_Buf_Limit     50MB
+        Skip_Long_Lines   On
+
+    [INPUT]
+        Name              tail
+        Path              /var/log/containers/procure-erp-redis*.log
+        multiline.parser  docker, cri
+        Tag               kube.redis.*
+        Mem_Buf_Limit     50MB
+        Skip_Long_Lines   On
+
+    [INPUT]
+        Name              tail
+        Path              /var/log/containers/procure-erp-nginx*.log
+        multiline.parser  docker, cri
+        Tag               kube.nginx.*
+        Mem_Buf_Limit     50MB
+        Skip_Long_Lines   On
+
+    [FILTER]
+        Name                kubernetes
+        Match               kube.*
+        Kube_URL            https://kubernetes.default.svc:443
+        Kube_CA_File        /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        Kube_Token_File     /var/run/secrets/kubernetes.io/serviceaccount/token
+        Kube_Tag_Prefix     kube.var.log.containers.
+        Merge_Log           On
+        Merge_Log_Key       log_processed
+        K8S-Logging.Parser  On
+        K8S-Logging.Exclude Off
+        Annotations         Off
+        Labels              On
+
+    [FILTER]
+        Name                nest
+        Match               kube.*
+        Operation           lift
+        Nested_under        kubernetes
+        Add_prefix          kube_
+
+    [FILTER]
+        Name                modify
+        Match               kube.*
+        Add                 cluster_name procure-erp-prod
+        Add                 environment production
+        Add                 application procure-erp
+
+    [FILTER]
+        Name                grep
+        Match               kube.backend.*
+        Regex               log_level (ERROR|WARN|INFO)
+
+    [OUTPUT]
+        Name            es
+        Match           kube.backend.*
+        Host            ${FLUENT_ELASTICSEARCH_HOST}
+        Port            ${FLUENT_ELASTICSEARCH_PORT}
+        HTTP_User       ${FLUENT_ELASTICSEARCH_USER}
+        HTTP_Passwd     ${FLUENT_ELASTICSEARCH_PASSWORD}
+        Index           procure-erp-backend-logs
+        Type            _doc
+        Logstash_Format On
+        Logstash_Prefix procure-erp-backend
+        Logstash_DateFormat %Y.%m.%d
+        Time_Key        @timestamp
+        Time_Key_Format %Y-%m-%dT%H:%M:%S.%L
+        tls             On
+        tls.verify      Off
+
+    [OUTPUT]
+        Name            es
+        Match           kube.frontend.*
+        Host            ${FLUENT_ELASTICSEARCH_HOST}
+        Port            ${FLUENT_ELASTICSEARCH_PORT}
+        HTTP_User       ${FLUENT_ELASTICSEARCH_USER}
+        HTTP_Passwd     ${FLUENT_ELASTICSEARCH_PASSWORD}
+        Index           procure-erp-frontend-logs
+        Type            _doc
+        Logstash_Format On
+        Logstash_Prefix procure-erp-frontend
+        Logstash_DateFormat %Y.%m.%d
+        Time_Key        @timestamp
+        Time_Key_Format %Y-%m-%dT%H:%M:%S.%L
+        tls             On
+        tls.verify      Off
+
+    [OUTPUT]
+        Name            es
+        Match           kube.postgres.*
+        Host            ${FLUENT_ELASTICSEARCH_HOST}
+        Port            ${FLUENT_ELASTICSEARCH_PORT}
+        HTTP_User       ${FLUENT_ELASTICSEARCH_USER}
+        HTTP_Passwd     ${FLUENT_ELASTICSEARCH_PASSWORD}
+        Index           procure-erp-database-logs
+        Type            _doc
+        Logstash_Format On
+        Logstash_Prefix procure-erp-database
+        Logstash_DateFormat %Y.%m.%d
+        Time_Key        @timestamp
+        Time_Key_Format %Y-%m-%dT%H:%M:%S.%L
+        tls             On
+        tls.verify      Off
+
+  parsers.conf: |
+    [PARSER]
+        Name        docker
+        Format      json
+        Time_Key    time
+        Time_Format %Y-%m-%dT%H:%M:%S.%L
+        Time_Keep   On
+
+    [PARSER]
+        Name        cri
+        Format      regex
+        Regex       ^(?<time>[^ ]+) (?<stream>stdout|stderr) (?<logtag>[^ ]*) (?<message>.*)$
+        Time_Key    time
+        Time_Format %Y-%m-%dT%H:%M:%S.%L%z
+
+    [PARSER]
+        Name        procure-erp-backend
+        Format      json
+        Time_Key    timestamp
+        Time_Format %Y-%m-%dT%H:%M:%S.%L
+        Time_Keep   On
+
+    [PARSER]
+        Name        nginx
+        Format      regex
+        Regex       ^(?<remote>[^ ]*) (?<host>[^ ]*) (?<user>[^ ]*) \[(?<time>[^\]]*)\] "(?<method>\S+)(?: +(?<path>[^\"]*?)(?: +\S*)?)?" (?<code>[^ ]*) (?<size>[^ ]*)(?: "(?<referer>[^\"]*)" "(?<agent>[^\"]*)")?$
+        Time_Key    time
+        Time_Format %d/%b/%Y:%H:%M:%S %z
+
+---
+# Service Account for Fluent Bit
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fluent-bit
+  namespace: procure-erp-prod
+  labels:
+    app: fluent-bit
+    environment: production
+
+---
+# ClusterRole for Fluent Bit
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: fluent-bit
+  labels:
+    app: fluent-bit
+    environment: production
+rules:
+- apiGroups: [""]
+  resources:
+  - namespaces
+  - pods
+  - pods/logs
+  - nodes
+  - nodes/proxy
+  verbs: ["get", "list", "watch"]
+
+---
+# ClusterRoleBinding for Fluent Bit
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: fluent-bit
+  labels:
+    app: fluent-bit
+    environment: production
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: fluent-bit
+subjects:
+- kind: ServiceAccount
+  name: fluent-bit
+  namespace: procure-erp-prod
+
+---
+# Elasticsearch Service (External Reference)
+apiVersion: v1
+kind: Service
+metadata:
+  name: elasticsearch
+  namespace: logging
+  labels:
+    app: elasticsearch
+    environment: production
+spec:
+  type: ExternalName
+  externalName: elasticsearch.logging.svc.cluster.local
+  ports:
+  - port: 9200
+    name: http
+  - port: 9300
+    name: transport
+
+---
+# Log Aggregation and Alerting Rules
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: procure-erp-logging-alerts
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp
+    component: logging
+    environment: production
+spec:
+  groups:
+  - name: procure-erp-logging
+    rules:
+    - alert: HighErrorRate
+      expr: |
+        (
+          sum(rate(fluentbit_output_errors_total{job="fluent-bit"}[5m])) /
+          sum(rate(fluentbit_output_proc_records_total{job="fluent-bit"}[5m]))
+        ) > 0.05
+      for: 5m
+      labels:
+        severity: warning
+        component: logging
+      annotations:
+        summary: "High error rate in log collection"
+        description: "Fluent Bit error rate is above 5% for 5 minutes"
+
+    - alert: LogCollectionDown
+      expr: up{job="fluent-bit"} == 0
+      for: 2m
+      labels:
+        severity: critical
+        component: logging
+      annotations:
+        summary: "Log collection is down"
+        description: "Fluent Bit is not running for 2 minutes"
+
+    - alert: LogVolumeHigh
+      expr: |
+        sum(rate(fluentbit_output_proc_records_total{job="fluent-bit"}[5m])) > 10000
+      for: 10m
+      labels:
+        severity: warning
+        component: logging
+      annotations:
+        summary: "High log volume detected"
+        description: "Log processing rate is above 10,000 records/second for 10 minutes"
+
+    - alert: LogBackpressure
+      expr: |
+        sum(fluentbit_input_storage_backlog_total{job="fluent-bit"}) > 1000000
+      for: 5m
+      labels:
+        severity: warning
+        component: logging
+      annotations:
+        summary: "Log collection backpressure detected"
+        description: "Fluent Bit backlog is above 1M records for 5 minutes"
+
+---
+# Service Monitor for Fluent Bit
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: fluent-bit
+  namespace: procure-erp-prod
+  labels:
+    app: fluent-bit
+    environment: production
+    component: logging
+spec:
+  selector:
+    matchLabels:
+      app: fluent-bit
+  endpoints:
+  - port: http
+    interval: 30s
+    path: /api/v1/metrics/prometheus
+    scheme: http
+
+---
+# Service for Fluent Bit Metrics
+apiVersion: v1
+kind: Service
+metadata:
+  name: fluent-bit
+  namespace: procure-erp-prod
+  labels:
+    app: fluent-bit
+    environment: production
+    component: logging
+spec:
+  selector:
+    app: fluent-bit
+  ports:
+  - name: http
+    port: 2020
+    targetPort: 2020
+    protocol: TCP
+  - name: forward
+    port: 24224
+    targetPort: 24224
+    protocol: TCP
+
+---
+# Log Retention Policy
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: log-retention-policy
+  namespace: procure-erp-prod
+  labels:
+    app: procure-erp
+    component: logging
+    environment: production
+data:
+  retention-policy.json: |
+    {
+      "policies": {
+        "backend-logs": {
+          "retention_days": 30,
+          "hot_phase_days": 7,
+          "warm_phase_days": 14,
+          "cold_phase_days": 9,
+          "delete_phase": true
+        },
+        "frontend-logs": {
+          "retention_days": 15,
+          "hot_phase_days": 3,
+          "warm_phase_days": 7,
+          "cold_phase_days": 5,
+          "delete_phase": true
+        },
+        "database-logs": {
+          "retention_days": 90,
+          "hot_phase_days": 7,
+          "warm_phase_days": 30,
+          "cold_phase_days": 53,
+          "delete_phase": true
+        },
+        "security-logs": {
+          "retention_days": 365,
+          "hot_phase_days": 30,
+          "warm_phase_days": 90,
+          "cold_phase_days": 245,
+          "delete_phase": false
+        },
+        "audit-logs": {
+          "retention_days": 2555,
+          "hot_phase_days": 90,
+          "warm_phase_days": 365,
+          "cold_phase_days": 2100,
+          "delete_phase": false
+        }
+      }
+    }
